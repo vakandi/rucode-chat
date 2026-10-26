@@ -154,6 +154,15 @@ final class ConversationStore: Sendable {
         let assistantMessage = MessageSD(content: "", role: "assistant")
         assistantMessage.conversation = conversation
 
+        /// Show the new turn immediately. For an existing session, reloading the
+        /// remote transcript here would wipe the just-sent bubble (the server
+        /// does not have it yet) and the assistant placeholder, killing the loader.
+        if selectedConversation == nil {
+            messages = []
+        }
+        selectedConversation = conversation
+        messages.append(contentsOf: [userMessage, assistantMessage])
+
         conversationState = .loading
         resetStreamBuffer()
 
@@ -163,7 +172,6 @@ final class ConversationStore: Sendable {
             try? await swiftDataService.updateConversation(conversation)
             try? await swiftDataService.createMessage(userMessage)
             try? await swiftDataService.createMessage(assistantMessage)
-            try? await reloadConversation(conversation)
             try? await loadConversations()
 
             do {

@@ -15,17 +15,22 @@ struct InputFieldsView: View {
     var selectedModel: LanguageModelSD?
     var onSendMessageTap: @MainActor (_ prompt: String, _ model: LanguageModelSD, _ image: Image?, _ trimmingMessageId: String?) -> ()
     @Binding var editMessage: MessageSD?
-    @State var isRecording = false
     
     @State private var selectedImage: Image?
     @State private var attachedFiles: [URL] = []
     @State private var fileDropActive: Bool = false
     @State private var fileSelectingActive: Bool = false
     @State private var documentSelectingActive: Bool = false
+    @State private var showModelAlert: Bool = false
     @FocusState private var isFocusedInput: Bool
     
     @MainActor private func sendMessage() {
-        guard let selectedModel = selectedModel else { return }
+        let hasText = !message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        guard hasText || !attachedFiles.isEmpty else { return }
+        guard let selectedModel = selectedModel else {
+            showModelAlert = true
+            return
+        }
         
         onSendMessageTap(
             promptWithAttachments(),
@@ -34,7 +39,6 @@ struct InputFieldsView: View {
             editMessage?.id.uuidString
         )
         withAnimation {
-            isRecording = false
             isFocusedInput = false
             editMessage = nil
             selectedImage = nil
@@ -158,11 +162,6 @@ struct InputFieldsView: View {
                 }
                 
                 HStack {
-                    RecordingView(isRecording: $isRecording.animation()) { transcription in
-                        withAnimation(.easeIn(duration: 0.3)) {
-                            self.message = transcription
-                        }
-                    }
                     
                     SimpleFloatingButton(systemImage: "photo.fill", onClick: { fileSelectingActive.toggle() })
                         .showIf(selectedModel?.supportsImages ?? false)
@@ -182,15 +181,8 @@ struct InputFieldsView: View {
                         })
                     
                     
-                    Group {
-                        switch conversationState {
-                        case .loading:
-                            SimpleFloatingButton(systemImage: "square.fill", onClick: onStopGenerateTap)
-                        default:
-                            SimpleFloatingButton(systemImage: "paperplane.fill", onClick: { Task { sendMessage() } })
-                                .showIf(!message.isEmpty || !attachedFiles.isEmpty)
-                        }
-                    }
+                    SimpleFloatingButton(systemImage: "paperplane.fill", onClick: { Task { sendMessage() } })
+                        .showIf(!message.isEmpty || !attachedFiles.isEmpty)
                     
                 }
             }
@@ -243,6 +235,11 @@ struct InputFieldsView: View {
         .onTapGesture {
             // allow focusing text area on greater tap area
             isFocusedInput = true
+        }
+        .alert("Select a model first", isPresented: $showModelAlert) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text("Pick a model from the toolbar before sending your message.")
         }
     }
 }
