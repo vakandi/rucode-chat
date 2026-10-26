@@ -1,0 +1,14 @@
+# SwiftPM build products
+.build/
+build/
+dist/
+Package.resolved.lock
+
+# Xcode
+DerivedData/
+xcuserdata/
+*.xcuserstate
+*.xcscmblueprint
+
+# macOS
+.DS_Store

@@ -6,26 +6,26 @@
 //
 
 import Foundation
-import SwiftData
+import Observation
 
-@Model
+@Observable
 final class LanguageModelSD: Identifiable {
-    @Attribute(.unique) var name: String
+    var name: String
     var isAvailable: Bool = false
     var imageSupport: Bool = false
-    @Attribute var modelProvider: ModelProvider? = ModelProvider.ollama
-    
-    @Relationship(deleteRule: .cascade, inverse: \ConversationSD.model)
+    var modelProvider: ModelProvider? = ModelProvider.opencodeRust
+
     var conversations: [ConversationSD]? = []
-    
-    
+
     init(name: String, imageSupport: Bool = false, modelProvider: ModelProvider) {
         self.name = name
         self.imageSupport = imageSupport
         self.modelProvider = modelProvider
     }
-    
-    @Transient var isNotAvailable: Bool {
+
+    var id: String { name }
+
+    var isNotAvailable: Bool {
         isAvailable == false
     }
 }
@@ -36,10 +36,10 @@ extension LanguageModelSD {
         guard let modelName = name.components(separatedBy: ":").first else {
             return name
         }
-        
+
         return modelName.capitalized
     }
-    
+
     var prettyVersion: String {
         let components = name.components(separatedBy: ":")
         if components.count >= 2 {
@@ -47,12 +47,12 @@ extension LanguageModelSD {
         }
         return ""
     }
-    
+
     var supportsImages: Bool {
         if imageSupport {
             return true
         }
-        
+
         /// older technique to detect image modality
         /// @deprecated
         let imageSupportedModels = ["llava"]
@@ -63,15 +63,21 @@ extension LanguageModelSD {
         }
         return false
     }
-    
+
     static let sample: [LanguageModelSD] = [
-        .init(name: "Llama:latest", modelProvider: .ollama),
-        .init(name: "Mistral:latest", modelProvider: .ollama)
+        .init(name: "opencode/example-model", modelProvider: .opencodeRust),
+        .init(name: "opencode/another-model", modelProvider: .opencodeRust)
     ]
 }
 
 
 // MARK: - @unchecked Sendable
 extension LanguageModelSD: @unchecked Sendable {
-    /// We hide compiler warnings for concurency. We have to make sure to modify the data only via SwiftDataManager to ensure concurrent operations.
+    /// The legacy persistence layer crossed actor boundaries; mutations still happen on the main actor.
+}
+
+// MARK: - Identity
+extension LanguageModelSD: Hashable {
+    static func == (lhs: LanguageModelSD, rhs: LanguageModelSD) -> Bool { lhs.name == rhs.name }
+    func hash(into hasher: inout Hasher) { hasher.combine(name) }
 }

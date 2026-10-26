@@ -43,64 +43,18 @@ struct MessageListView: View {
                 ScrollView {
                     VStack {
                         ForEach(messages) { message in
-                            let contextMenu = ContextMenu(menuItems: {
-                                Button(action: {Clipboard.shared.setString(message.content)}) {
-                                    Label("Copy", systemImage: "doc.on.doc")
-                                }
-                                
-#if os(iOS) || os(visionOS)
-                                Button(action: { messageSelected = message }) {
-                                    Label("Select Text", systemImage: "selection.pin.in.out")
-                                }
-                                
-                                Button(action: {
-                                    onReadAloud(message.content)
-                                }) {
-                                    Label("Read Aloud", systemImage: "speaker.wave.3.fill")
-                                }
-#endif
-                                
-                                if message.role == "user" {
-                                    Button(action: {
-                                        withAnimation { editMessage = message }
-                                    }) {
-                                        Label("Edit", systemImage: "pencil")
-                                    }
-                                }
-                                
-                                if editMessage?.id == message.id {
-                                    Button(action: {
-                                        withAnimation { editMessage = nil }
-                                    }) {
-                                        Label("Unselect", systemImage: "pencil")
-                                    }
-                                }
-                            })
-                            
-                            ChatMessageView(
-                                message: message,
-                                showLoader: conversationState == .loading && messages.last == message,
-                                userInitials: userInitials,
-                                editMessage: $editMessage
-                            )
-                            .listRowInsets(EdgeInsets())
-                            .listRowSeparator(.hidden)
-                            .padding(.vertical, 10)
-                            .padding(.horizontal, 10)
-                            .contentShape(Rectangle())
-                            .contextMenu(contextMenu)
-                            .runningBorder(animated: message.id == editMessage?.id)
-                            .id(message)
+                            messageRow(message)
+                                .id(message)
                         }
                     }
                 }
                 .onAppear {
                     scrollViewProxy.scrollTo(messages.last, anchor: .bottom)
                 }
-                .onChange(of: messages) { oldMessages, newMessages in
+                .onChange(of: messages) { _, _ in
                     scrollViewProxy.scrollTo(messages.last, anchor: .bottom)
                 }
-                .onChange(of: messages.last?.content) {
+                .onChange(of: messages.last?.content) { _ in
                     scrollViewProxy.scrollTo(messages.last, anchor: .bottom)
                 }
 #if os(iOS) || os(visionOS)
@@ -109,7 +63,7 @@ struct MessageListView: View {
                 }
 #endif
             }
-            
+
             ReadingAloudView(onStopTap: stopReadingAloud)
                 .frame(maxWidth: 400)
                 .showIf(speechSynthesizer.isSpeaking)
@@ -117,6 +71,63 @@ struct MessageListView: View {
                     insertion: AnyTransition.opacity.combined(with: .scale(scale: 0.7, anchor: .top)),
                     removal: AnyTransition.opacity.combined(with: .scale(scale: 0.7, anchor: .top)))
                 )
+        }
+    }
+
+    /// Extracted from `body`: the single-expression row builder blew past the
+    /// type-checker's budget once the message model gained observation.
+    private func messageRow(_ message: MessageSD) -> some View {
+        ChatMessageView(
+            message: message,
+            showLoader: conversationState == .loading && messages.last == message,
+            userInitials: userInitials,
+            editMessage: $editMessage
+        )
+        .listRowInsets(EdgeInsets())
+        .listRowSeparator(.hidden)
+        .padding(.vertical, 10)
+        .padding(.horizontal, 10)
+        .contentShape(Rectangle())
+        .contextMenu { messageMenu(for: message) }
+        .runningBorder(animated: message.id == editMessage?.id)
+    }
+
+    @ViewBuilder
+    private func messageMenu(for message: MessageSD) -> some View {
+        Button {
+            Clipboard.shared.setString(message.content)
+        } label: {
+            Label("Copy", systemImage: "doc.on.doc")
+        }
+
+#if os(iOS) || os(visionOS)
+        Button {
+            messageSelected = message
+        } label: {
+            Label("Select Text", systemImage: "selection.pin.in.out")
+        }
+
+        Button {
+            onReadAloud(message.content)
+        } label: {
+            Label("Read Aloud", systemImage: "speaker.wave.3.fill")
+        }
+#endif
+
+        if message.role == "user" {
+            Button {
+                withAnimation { editMessage = message }
+            } label: {
+                Label("Edit", systemImage: "pencil")
+            }
+        }
+
+        if editMessage?.id == message.id {
+            Button {
+                withAnimation { editMessage = nil }
+            } label: {
+                Label("Unselect", systemImage: "pencil")
+            }
         }
     }
 }

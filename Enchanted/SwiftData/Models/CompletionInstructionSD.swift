@@ -6,21 +6,21 @@
 //
 
 import Foundation
-import SwiftData
+import Observation
 
-@Model
+@Observable
 final class CompletionInstructionSD: Identifiable {
-    @Attribute(.unique) var id: UUID = UUID()
+    var id: UUID = UUID()
     var name: String
     var keyboardCharacterStr: String
     var instruction: String
     var order: Int
     var modelTemperature: Float? = 0.8
-    
+
     var keyboardCharacter: Character {
         keyboardCharacterStr.first ?? "x"
     }
-    
+
     init(name: String, keyboardCharacterStr: String, instruction: String, order: Int, modelTemperature: Float = 0.8) {
         self.name = name
         self.keyboardCharacterStr = keyboardCharacterStr
@@ -43,5 +43,11 @@ extension CompletionInstructionSD {
 
 // MARK: - @unchecked Sendable
 extension CompletionInstructionSD: @unchecked Sendable {
-    /// We hide compiler warnings for concurency. We have to make sure to modify the data only via SwiftDataManager to ensure concurrent operations.
+    /// The legacy persistence layer crossed actor boundaries; mutations still happen on the main actor.
+}
+
+// MARK: - Identity
+extension CompletionInstructionSD: Hashable {
+    static func == (lhs: CompletionInstructionSD, rhs: CompletionInstructionSD) -> Bool { lhs.id == rhs.id }
+    func hash(into hasher: inout Hasher) { hasher.combine(id) }
 }

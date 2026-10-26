@@ -11,10 +11,12 @@ struct Chat: View, Sendable {
     @State private var languageModelStore: LanguageModelStore
     @State private var conversationStore: ConversationStore
     @State private var appStore: AppStore
-    @AppStorage("systemPrompt") private var systemPrompt: String = ""
     @AppStorage("appUserInitials") private var userInitials: String = ""
-    @AppStorage("defaultOllamaModel") private var defaultOllamaModel: String = ""
+    @AppStorage("rucodeDefaultModel") private var defaultModel: String = ""
+    @AppStorage("rucodeWorkingDirectory") private var defaultWorkingDirectory = NSHomeDirectory() + "/Documents"
     @State var showMenu = false
+    @State private var showNewChatDirectoryPrompt = false
+    @State private var newChatDirectory = ""
     
     init(languageModelStore: LanguageModelStore, conversationStore: ConversationStore, appStore: AppStore) {
         _languageModelStore = State(initialValue: languageModelStore)
@@ -34,8 +36,8 @@ struct Chat: View, Sendable {
     @MainActor
     func updateSelectedModel() {
         if languageModelStore.selectedModel == nil {
-            if defaultOllamaModel != "" {
-                languageModelStore.setModel(modelName: defaultOllamaModel)
+            if !defaultModel.isEmpty {
+                languageModelStore.setModel(modelName: defaultModel)
             } else {
                 languageModelStore.setModel(model: languageModelStore.models.first)
             }
@@ -48,7 +50,6 @@ struct Chat: View, Sendable {
             userPrompt: prompt,
             model: model,
             image: image,
-            systemPrompt: systemPrompt,
             trimmingMessageId: trimmingMessageId
         )
     }
@@ -77,12 +78,24 @@ struct Chat: View, Sendable {
     }
     
     func newConversation() {
-        DispatchQueue.main.async {
-            withAnimation(.easeOut(duration: 0.3)) {
-                self.conversationStore.selectedConversation = nil
-            }
+        newChatDirectory = defaultWorkingDirectory
+        showNewChatDirectoryPrompt = true
+    }
+
+    @MainActor
+    private func createConversation(in directory: String) async {
+        let conversation = ConversationSD(name: "New Chat", workDirectory: directory)
+        do {
+            try await conversationStore.create(conversation)
+            conversationStore.selectedConversation = conversation
+            conversationStore.messages = []
+            try? await conversationStore.loadConversations()
+        } catch {
+            conversationStore.conversationState = .error(message: error.localizedDescription)
         }
-        
+        DispatchQueue.main.async {
+            withAnimation(.easeOut(duration: 0.3)) { self.showMenu = false }
+        }
         Task {
             await Haptics.shared.mediumTap()
             try? await languageModelStore.loadModels()
@@ -116,37 +129,67 @@ struct Chat: View, Sendable {
                     Clipboard.shared.setString(jsonString)
                 }
             } else {
-                let body = messages.map{"\($0.role.capitalized): \($0.content)"}.joined(separator: "\n\n")
+                let body = messages.map { message -> String in
+                    "\(message.role.capitalized): \(message.content)"
+                }.joined(separator: "\n\n")
                 Clipboard.shared.setString(body)
             }
         }
     }
     
     var body: some View {
+        content
+        .onChange(of: languageModelStore.models) { _, _ in
+            if languageModelStore.selectedModel == nil {
+                updateSelectedModel()
+            }
+        }
+        .onAppear {
+            if defaultModel.isEmpty, let legacy = UserDefaults.standard.string(forKey: "defaultOllamaModel") {
+                defaultModel = legacy
+            }
+        }
+        .onChange(of: conversationStore.selectedConversation, initial: true) { _, newConversation in
+            handleSelectedConversationChange(newConversation)
+        }
+        .alert("Working directory for new chat", isPresented: $showNewChatDirectoryPrompt) {
+            TextField("Server-visible absolute path", text: $newChatDirectory)
+#if os(iOS) || os(visionOS)
+                .textInputAutocapitalization(.never)
+#endif
+                .autocorrectionDisabled()
+            Button("Cancel", role: .cancel) {}
+            Button("Create chat") {
+                createConversationFromPrompt()
+            }
+        } message: {
+            Text("Choose the absolute folder path as seen by the RuCode server. This is saved for this conversation.")
+        }
+    }
+
+    private func handleSelectedConversationChange(_ newConversation: ConversationSD?) {
+        if let conversation = newConversation {
+            languageModelStore.setModel(model: conversation.model)
+        } else {
+            updateSelectedModel()
+        }
+    }
+
+    private func createConversationFromPrompt() {
+        let directory = newChatDirectory.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !directory.isEmpty else { return }
+        Task { await createConversation(in: directory) }
+    }
+
+    // The concrete `ChatView` return type keeps the compiler from solving the
+    // whole 18-argument generic expression as one constraint system.
+    @ViewBuilder
+    private var content: some View {
         Group {
 #if os(macOS) || os(visionOS)
-            ChatView(
-                selectedConversation: conversationStore.selectedConversation,
-                conversations: conversationStore.conversations,
-                messages: conversationStore.messages,
-                modelsList: languageModelStore.models,
-                onMenuTap: toggleMenu,
-                onNewConversationTap: newConversation,
-                onSendMessageTap: sendMessage,
-                onConversationTap:onConversationTap,
-                conversationState: conversationStore.conversationState,
-                onStopGenerateTap: onStopGenerateTap,
-                reachable: appStore.isReachable,
-                modelSupportsImages: languageModelStore.supportsImages,
-                selectedModel: languageModelStore.selectedModel,
-                onSelectModel: languageModelStore.setModel,
-                onConversationDelete: onConversationDelete,
-                onDeleteDailyConversations: conversationStore.deleteDailyConversations,
-                userInitials: userInitials,
-                copyChat: copyChat
-            )
+            chatViewMacOS
 #else
-            SideBarStack(sidebarWidth: 300,showSidebar: $showMenu, sidebar: {
+            SideBarStack(sidebarWidth: 300, showSidebar: $showMenu, sidebar: {
                 SidebarView(
                     selectedConversation: conversationStore.selectedConversation,
                     conversations: conversationStore.conversations,
@@ -173,17 +216,30 @@ struct Chat: View, Sendable {
             }
 #endif
         }
-        .onChange(of: languageModelStore.models, { _, modelsList in
-            if languageModelStore.selectedModel == nil {
-                updateSelectedModel()
-            }
-        })
-        .onChange(of: conversationStore.selectedConversation, initial: true, { _, newConversation in
-            if let conversation = newConversation {
-                languageModelStore.setModel(model: conversation.model)
-            } else {
-                updateSelectedModel()
-            }
-        })
     }
+
+#if os(macOS) || os(visionOS)
+    private var chatViewMacOS: ChatView {
+        ChatView(
+            selectedConversation: conversationStore.selectedConversation,
+            conversations: conversationStore.conversations,
+            messages: conversationStore.messages,
+            modelsList: languageModelStore.models,
+            onMenuTap: toggleMenu,
+            onNewConversationTap: newConversation,
+            onSendMessageTap: sendMessage,
+            onConversationTap: onConversationTap,
+            conversationState: conversationStore.conversationState,
+            onStopGenerateTap: onStopGenerateTap,
+            reachable: appStore.isReachable,
+            modelSupportsImages: languageModelStore.supportsImages,
+            selectedModel: languageModelStore.selectedModel,
+            onSelectModel: languageModelStore.setModel,
+            onConversationDelete: onConversationDelete,
+            onDeleteDailyConversations: conversationStore.deleteDailyConversations,
+            userInitials: userInitials,
+            copyChat: copyChat
+        )
+    }
+#endif
 }

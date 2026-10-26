@@ -6,26 +6,24 @@
 //
 
 import Foundation
-import SwiftData
+import Observation
 
-@Model
+@Observable
 final class ConversationSD: Identifiable {
-    @Attribute(.unique) var id: UUID = UUID()
-    
+    var id: UUID = UUID()
+
     var name: String
     var createdAt: Date
     var updatedAt: Date
-
-    @Relationship(deleteRule: .nullify)
+    var workDirectory: String?
     var model: LanguageModelSD?
-
-    @Relationship(deleteRule: .cascade, inverse: \MessageSD.conversation)
     var messages: [MessageSD] = []
-    
-    init(name: String, updatedAt: Date = Date.now) {
+
+    init(name: String, updatedAt: Date = Date.now, workDirectory: String? = nil) {
         self.name = name
         self.updatedAt = updatedAt
         self.createdAt = updatedAt
+        self.workDirectory = workDirectory
     }
 }
 
@@ -40,5 +38,11 @@ extension ConversationSD {
 
 // MARK: - @unchecked Sendable
 extension ConversationSD: @unchecked Sendable {
-    /// We hide compiler warnings for concurency. We have to make sure to modify the data only via SwiftDataManager to ensure concurrent operations.
+    /// The legacy persistence layer crossed actor boundaries; mutations still happen on the main actor.
+}
+
+// MARK: - Identity
+extension ConversationSD: Hashable {
+    static func == (lhs: ConversationSD, rhs: ConversationSD) -> Bool { lhs.id == rhs.id }
+    func hash(into hasher: inout Hasher) { hasher.combine(id) }
 }

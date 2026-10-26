@@ -6,8 +6,6 @@
 //
 
 import SwiftUI
-import OllamaKit
-import Combine
 
 @Observable
 final class CompletionsPanelVM {
@@ -16,7 +14,7 @@ final class CompletionsPanelVM {
     var messageResponse: String = ""
     var isReady = false
     let sentenceQueue = AsyncQueue<String>()
-    private var generation: AnyCancellable?
+    private var generation: Task<Void, Never>?
     private var currentMessageBuffer: String = ""
 
     
@@ -41,42 +39,43 @@ final class CompletionsPanelVM {
         guard let selectedText = selectedText, !isReady else { return }
         let prompt = CompletionsPanelVM.constructPrompt(completion: completion, selectedText: selectedText)
         
-        let messages: [OKChatRequestData.Message] = [
-            .init(role: .user, content: prompt)
-        ]
-        var request = OKChatRequestData(model: model.name, messages: messages)
-        request.options = OKCompletionOptions(temperature: completion.modelTemperature ?? 0.8)
         currentMessageBuffer = ""
         messageResponse = ""
         
-        print("request", request.messages)
         Task {
-            if await OllamaService.shared.ollamaKit.reachable() {
-                generation = OllamaService.shared.ollamaKit.chat(data: request)
-                    .sink(receiveCompletion: { [weak self] completion in
-                        switch completion {
-                        case .finished:
-                            self?.handleComplete()
-                        case .failure(let error):
-                            self?.handleError(error.localizedDescription)
+            do {
+                let directory = UserDefaults.standard.string(forKey: "rucodeWorkingDirectory") ?? ""
+                guard !directory.isEmpty else { self.handleError("Set the server-visible working directory in RuCode Chat Settings."); return }
+                let session = try await RuCodeAPI.shared.createSession(directory: directory, title: "Text completion")
+                let events = try await RuCodeAPI.shared.connectEvents()
+                let agent = UserDefaults.standard.string(forKey: "rucodeSelectedAgent")
+                try await RuCodeAPI.shared.prompt(sessionID: session.id, message: prompt, model: model.name, agent: agent)
+                generation = Task { [weak self] in
+                    do {
+                        for try await event in events where event.sessionID == session.id {
+                            if let delta = event.text {
+                                await self?.handleReceive(delta)
+                            }
+                            if event.type == "prompt.final" {
+                                await self?.handleComplete()
+                                return
+                            }
                         }
-                    }, receiveValue: { [weak self] response in
-                        self?.handleReceive(response)
-                    })
-            } else {
-                self.handleError("Server unreachable")
+                        await self?.handleError("Live connection ended before prompt.final.")
+                    } catch {
+                        await self?.handleError(error.localizedDescription)
+                    }
+                }
+            } catch {
+                self.handleError(error.localizedDescription)
             }
         }
     }
     
     @MainActor
-    private func handleReceive(_ response: OKChatResponse)  {
-        Task {
-            if let responseContent = response.message?.content {
-                await sentenceQueue.enqueue(responseContent)
-                self.messageResponse = self.messageResponse + responseContent
-            }
-        }
+    private func handleReceive(_ responseContent: String)  {
+        Task { await sentenceQueue.enqueue(responseContent) }
+        messageResponse += responseContent
     }
     
     @MainActor

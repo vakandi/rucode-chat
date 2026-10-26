@@ -27,8 +27,8 @@ struct CompletionButtonView: View {
             }
             .padding(.vertical, 4)
             .padding(.horizontal, 8)
-            .foregroundStyle(.label)
-            .background(RoundedRectangle(cornerRadius: 5).fill(.bgCustom))
+            .foregroundStyle(Color.labelCustom)
+            .background(RoundedRectangle(cornerRadius: 5).fill(Color.bgCustom))
         }
         .buttonStyle(GrowingButton())
     }

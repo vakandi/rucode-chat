@@ -6,8 +6,6 @@
 //
 
 import Foundation
-import SwiftData
-import OllamaKit
 import Combine
 import SwiftUI
 
@@ -16,7 +14,7 @@ final class ConversationStore: Sendable {
     static let shared = ConversationStore(swiftDataService: SwiftDataService.shared)
     
     private var swiftDataService: SwiftDataService
-    private var generation: AnyCancellable?
+    private var generation: Task<Void, Never>?
     
     /// For some reason (SwiftUI bug / too frequent UI updates) updating UI for each stream message sometimes freezes the UI.
     /// Throttling UI updates seem to fix the issue.
@@ -38,9 +36,21 @@ final class ConversationStore: Sendable {
     
     func loadConversations() async throws {
         print("loading conversations")
-        let fetchedConversations = try await swiftDataService.fetchConversations()
+        var fetchedConversations = try await swiftDataService.fetchConversations()
+        let directory = UserDefaults.standard.string(forKey: "rucodeWorkingDirectory") ?? ""
+        if !directory.isEmpty, let remoteSessions = try? await RuCodeAPI.shared.listSessions(directory: directory) {
+            var remoteIDs = UserDefaults.standard.dictionary(forKey: "rucodeSessionIDs") as? [String: String] ?? [:]
+            for session in remoteSessions {
+                if fetchedConversations.contains(where: { remoteIDs[$0.id.uuidString] == session.id }) { continue }
+                let conversation = ConversationSD(name: session.title?.isEmpty == false ? session.title! : "OpenCodeRust session")
+                remoteIDs[conversation.id.uuidString] = session.id
+                try? await swiftDataService.createConversation(conversation)
+                fetchedConversations.append(conversation)
+            }
+            UserDefaults.standard.set(remoteIDs, forKey: "rucodeSessionIDs")
+        }
         DispatchQueue.main.async {
-            self.conversations = fetchedConversations
+            self.conversations = fetchedConversations.sorted { $0.updatedAt > $1.updatedAt }
         }
         print("loaded conversations")
     }
@@ -63,7 +73,7 @@ final class ConversationStore: Sendable {
                 selectedConversation = nil
                 messages = []
             }
-            try? await swiftDataService.deleteConversations()
+            try? await swiftDataService.deleteConversations(date)
             try? await loadConversations()
         }
     }
@@ -74,6 +84,19 @@ final class ConversationStore: Sendable {
     }
     
     func reloadConversation(_ conversation: ConversationSD) async throws {
+        let remoteIDs = UserDefaults.standard.dictionary(forKey: "rucodeSessionIDs") as? [String: String] ?? [:]
+        if let remoteID = remoteIDs[conversation.id.uuidString],
+           let remoteMessages = try? await RuCodeAPI.shared.messages(sessionID: remoteID) {
+            let messages = remoteMessages.map { item -> MessageSD in
+                let content = (item.parts ?? []).compactMap { $0.type == "text" ? $0.text : nil }.joined()
+                return MessageSD(content: content, role: item.info.role, done: true)
+            }
+            DispatchQueue.main.async {
+                self.messages = messages
+                self.selectedConversation = conversation
+            }
+            return
+        }
         let (messages, selectedConversation) = try await (
             swiftDataService.fetchMessages(conversation.id),
             swiftDataService.getConversation(conversation.id)
@@ -100,105 +123,180 @@ final class ConversationStore: Sendable {
     
     @MainActor func stopGenerate() {
         generation?.cancel()
-        handleComplete()
-        withAnimation {
-            conversationState = .completed
-        }
+        handleError("Stopped receiving live updates. The OpenCodeRust turn may still be running.")
     }
     
     @MainActor
-    func sendPrompt(userPrompt: String, model: LanguageModelSD, image: Image? = nil, systemPrompt: String = "", trimmingMessageId: String? = nil) {
+    func sendPrompt(userPrompt: String, model: LanguageModelSD, image: Image? = nil, trimmingMessageId: String? = nil) {
         guard userPrompt.trimmingCharacters(in: .whitespacesAndNewlines).count > 0 else { return }
-        
+        guard image == nil else {
+            conversationState = .error(message: "Image prompts are not supported by the OpenCodeRust integration yet.")
+            return
+        }
+
         let conversation = selectedConversation ?? ConversationSD(name: userPrompt)
         conversation.updatedAt = Date.now
         conversation.model = model
-        
-        print("model", model.name)
-        print("conversation", conversation.name)
-        
+
         /// trim conversation if on edit mode
         if let trimmingMessageId = trimmingMessageId {
-            conversation.messages = conversation.messages
-                .sorted{$0.createdAt < $1.createdAt}
-                .prefix(while: {$0.id.uuidString != trimmingMessageId})
+            conversation.messages = Array(
+                conversation.messages
+                    .sorted { $0.createdAt < $1.createdAt }
+                    .prefix(while: { $0.id.uuidString != trimmingMessageId })
+            )
         }
-        
-        /// add system prompt to very first message in the conversation
-        if !systemPrompt.isEmpty && conversation.messages.isEmpty {
-            let systemMessage = MessageSD(content: systemPrompt, role: "system")
-            systemMessage.conversation = conversation
-        }
-        
+
         /// construct new message
         let userMessage = MessageSD(content: userPrompt, role: "user", image: image?.render()?.compressImageData())
         userMessage.conversation = conversation
-        
-        /// prepare message history for Ollama
-        var messageHistory = conversation.messages
-            .sorted{$0.createdAt < $1.createdAt}
-            .map{OKChatRequestData.Message(role: OKChatRequestData.Message.Role(rawValue: $0.role) ?? .assistant, content: $0.content)}
-        
-        
-        print(messageHistory.map({$0.content}))
-        
-        /// attach selected image to the last Message
-        if let image = image?.render() {
-            if let lastMessage = messageHistory.popLast() {
-                let imagesBase64: [String] = [image.convertImageToBase64String()]
-                let messageWithImage = OKChatRequestData.Message(role: lastMessage.role, content: lastMessage.content, images: imagesBase64)
-                messageHistory.append(messageWithImage)
-            }
-        }
-        
+
         let assistantMessage = MessageSD(content: "", role: "assistant")
         assistantMessage.conversation = conversation
-        
+
         conversationState = .loading
-        
-        Task {
-            try await swiftDataService.updateConversation(conversation)
-            try await swiftDataService.createMessage(userMessage)
-            try await swiftDataService.createMessage(assistantMessage)
-            try await reloadConversation(conversation)
+        resetStreamBuffer()
+
+        generation?.cancel()
+        generation = Task { [weak self] in
+            guard let self else { return }
+            try? await swiftDataService.updateConversation(conversation)
+            try? await swiftDataService.createMessage(userMessage)
+            try? await swiftDataService.createMessage(assistantMessage)
+            try? await reloadConversation(conversation)
             try? await loadConversations()
-            
-            if await OllamaService.shared.ollamaKit.reachable() {
-                DispatchQueue.global(qos: .background).async {
-                    var request = OKChatRequestData(model: model.name, messages: messageHistory)
-                    request.options = OKCompletionOptions(temperature: 0)
-                    
-                    self.generation = OllamaService.shared.ollamaKit.chat(data: request)
-                        .sink(receiveCompletion: { [weak self] completion in
-                            switch completion {
-                            case .finished:
-                                self?.handleComplete()
-                            case .failure(let error):
-                                self?.handleError(error.localizedDescription)
-                            }
-                        }, receiveValue: { [weak self] response in
-                            self?.handleReceive(response)
-                        })
-                    
+
+            do {
+                let directory = conversation.workDirectory ?? UserDefaults.standard.string(forKey: "rucodeWorkingDirectory") ?? ""
+                guard !directory.isEmpty else {
+                    await MainActor.run { self.handleError("Set a server-visible working directory in Settings before starting a chat.") }
+                    return
                 }
-            } else {
-                self.handleError("Server unreachable")
+                var remoteSessions = UserDefaults.standard.dictionary(forKey: "rucodeSessionIDs") as? [String: String] ?? [:]
+                let key = conversation.id.uuidString
+                let remoteID: String
+                if let existingID = remoteSessions[key] {
+                    remoteID = existingID
+                } else {
+                    let session = try await RuCodeAPI.shared.createSession(directory: directory, title: conversation.name)
+                    remoteID = session.id
+                    remoteSessions[key] = remoteID
+                    UserDefaults.standard.set(remoteSessions, forKey: "rucodeSessionIDs")
+                }
+
+                let agent = UserDefaults.standard.string(forKey: "rucodeSelectedAgent")
+                var finished = false
+                var attempt = 0
+
+                while !finished && !Task.isCancelled {
+                    if attempt > 0 {
+                        // The turn keeps running server-side: reconnect and keep
+                        // consuming instead of re-sending the prompt.
+                        try? await Task.sleep(nanoseconds: 750_000_000 * UInt64(attempt))
+                    }
+                    do {
+                        // Subscribe before the prompt so nothing can race past us.
+                        let events = try await RuCodeAPI.shared.connectEvents()
+                        if attempt == 0 {
+                            try await RuCodeAPI.shared.prompt(
+                                sessionID: remoteID,
+                                message: userPrompt,
+                                model: model.name,
+                                agent: agent,
+                                system: nil
+                            )
+                        }
+                        for try await event in events {
+                            guard event.sessionID == remoteID else { continue }
+                            if event.type == "prompt.final" {
+                                finished = true
+                                break
+                            }
+                            await MainActor.run { self.apply(streamEvent: event) }
+                        }
+                    } catch {
+                        print("SSE attempt \(attempt) failed: \(error.localizedDescription)")
+                    }
+                    attempt += 1
+                    if attempt >= 3 && !finished { break }
+                }
+
+                await self.finalizeTurn(remoteID: remoteID, reportedFinal: finished)
+            } catch {
+                await MainActor.run { self.handleError(error.localizedDescription) }
             }
         }
     }
-    
+
+    // MARK: - Live stream reconciliation
+
+    /// Parts streamed for the current turn, keyed by part id. `snapshots` holds the
+    /// first full `message.part.updated` payload so the following delta can prepend
+    /// it exactly once instead of duplicating text.
+    @MainActor private var streamPartSnapshots: [String: String] = [:]
+    @MainActor private var streamPartTexts: [String: String] = [:]
+    @MainActor private var streamPartOrder: [String] = []
+
     @MainActor
-    private func handleReceive(_ response: OKChatResponse)  {
-        if messages.isEmpty { return }
-        
-        if let responseContent = response.message?.content {
-            currentMessageBuffer = currentMessageBuffer + responseContent
-            
-            throttler.throttle { [weak self] in
-                guard let self = self else { return }
-                let lastIndex = self.messages.count - 1
-                self.messages[lastIndex].content.append(currentMessageBuffer)
-                currentMessageBuffer = ""
+    private func resetStreamBuffer() {
+        streamPartSnapshots = [:]
+        streamPartTexts = [:]
+        streamPartOrder = []
+    }
+
+    @MainActor
+    private func apply(streamEvent event: RuCodeEvent) {
+        guard let partID = event.partID, let text = event.text else { return }
+        switch event.type {
+        case "part.updated":
+            streamPartSnapshots[partID] = text
+            // A part we already track was rewritten: replace, never append.
+            if streamPartTexts[partID] != nil {
+                streamPartTexts[partID] = text
+                renderStreamBuffer()
+            }
+        case "part.delta":
+            if streamPartTexts[partID] == nil {
+                streamPartTexts[partID] = (streamPartSnapshots[partID] ?? "") + text
+                streamPartOrder.append(partID)
+            } else {
+                streamPartTexts[partID]? += text
+            }
+            renderStreamBuffer()
+        default:
+            break
+        }
+    }
+
+    @MainActor
+    private func renderStreamBuffer() {
+        guard !messages.isEmpty else { return }
+        let joined = streamPartOrder.compactMap { streamPartTexts[$0] }.joined()
+        messages[messages.count - 1].content = joined
+    }
+
+    /// Reconciles the turn with the server transcript: the live buffer can miss
+    /// text across a reconnect, and provider failures arrive as assistant content
+    /// even when `prompt.final` is emitted.
+    private func finalizeTurn(remoteID: String, reportedFinal: Bool) async {
+        var finalText: String?
+        if let stored = try? await RuCodeAPI.shared.messages(sessionID: remoteID),
+           let assistant = stored.last(where: { $0.info.role == "assistant" }) {
+            finalText = (assistant.parts ?? [])
+                .compactMap { $0.type == "text" ? $0.text : nil }
+                .joined()
+        }
+
+        await MainActor.run {
+            if let finalText, !finalText.isEmpty {
+                self.messages.last?.content = finalText
+            }
+            if let finalText, finalText.hasPrefix("Provider error:") {
+                self.handleError(finalText)
+            } else if reportedFinal || self.messages.last?.content.isEmpty == false {
+                self.handleComplete()
+            } else {
+                self.handleError("Live connection ended before the Rust server reported prompt.final. The turn may still be running.")
             }
         }
     }

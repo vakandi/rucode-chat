@@ -6,12 +6,12 @@
 //
 
 import Foundation
-import SwiftData
+import Observation
 
-@Model
+@Observable
 final class MessageSD: Identifiable {
-    @Attribute(.unique) var id: UUID = UUID()
-    
+    var id: UUID = UUID()
+
     var think: String? {
         if content.contains("<think>") {
             if content.contains("</think>") {
@@ -55,21 +55,20 @@ final class MessageSD: Identifiable {
     var done: Bool = false
     var error: Bool = false
     var createdAt: Date = Date.now
-    @Attribute(.externalStorage) var image: Data?
-    
-    @Relationship var conversation: ConversationSD?
-        
-    
+    var image: Data?
+
+    var conversation: ConversationSD?
+
+
     init(content: String, role: String, done: Bool = false, error: Bool = false, image: Data? = nil) {
         self.content = content
         self.role = role
         self.done = done
         self.error = error
-        self.conversation = conversation
         self.image = image
     }
 
-    @Transient var model: String {
+    var model: String {
         conversation?.model?.name ?? ""
     }
 }
@@ -85,5 +84,16 @@ extension MessageSD {
 
 // MARK: - @unchecked Sendable
 extension MessageSD: @unchecked Sendable {
-    /// We hide compiler warnings for concurency. We have to make sure to modify the data only via SwiftDataManager to ensure concurrent operations.
+    /// The legacy persistence layer crossed actor boundaries; mutations still happen on the main actor.
+}
+
+// MARK: - Identity
+extension MessageSD: Hashable {
+    static func == (lhs: MessageSD, rhs: MessageSD) -> Bool {
+        lhs.id == rhs.id && lhs.content == rhs.content && lhs.done == rhs.done && lhs.error == rhs.error
+    }
+
+    func hash(into hasher: inout Hasher) {
+        hasher.combine(id)
+    }
 }

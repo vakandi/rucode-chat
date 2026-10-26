@@ -64,7 +64,7 @@ struct PromptPanelView: View {
                 .antialiased(true)
                 .scaledToFit()
                 .frame(width: 20)
-                .foregroundColor(.label)
+                .foregroundColor(Color.labelCustom)
             
             TextField("How can I help today?", text: $prompt, axis: .vertical)
                 .font(dynamicFont)

@@ -7,19 +7,13 @@
 ![macOS](https://img.shields.io/badge/macOS-000000?style=?&logo=os&logoColor=white)
 ![visionOS](https://img.shields.io/badge/visionOS-000000?style=?&logo=os&logoColor=white)
 
-# Enchanted
+# RuCode Chat
 
-[Jaz](https://github.com/gluonfield/jaz) is the new iteration of this project.
+RuCode Chat is a community fork of [Enchanted](https://github.com/gluonfield/enchanted), adapted to chat with the OpenCodeRust engine through its Bun control API. The original project’s UI, license, and attribution are retained.
 
-Enchanted is an open source, [Ollama](https://github.com/jmorganca/ollama) compatible, elegant macOS/iOS/visionOS app for working with privately hosted models such as Llama 2, Mistral, Vicuna, Starling, and more. It's essentially ChatGPT app UI that connects to your private models. The goal of Enchanted is to deliver an unfiltered, secure, private, and multimodal experience across all of your devices in the iOS ecosystem (macOS, iOS, Watch, Vision Pro).
+The client uses Bun control (`/models`, `/server/health`) and the OpenCodeRust child (`/session`, `/session/{id}/prompt`, `/event`). Bun and child URLs, token, and server-visible working directory are configured in Settings. Defaults target the local Bun server on port 5656 and child on 4096; remote devices need explicit reachable addresses and secure transport.
 
-If you like the project, consider leaving a ⭐️ and following on [𝕏](https://twitter.com/amgauge).
-
-## App Store
-
-[<img src="https://i.ibb.co/7WXt3qZ/download.png">](https://apps.apple.com/gb/app/enchanted-llm/id6474268307)
-
-Note: You will need to run your own Ollama server to use the app. Read instructions below.
+The upstream screenshots and UI examples below document the Enchanted components this fork retains; they are not screenshots of the current RuCode Chat integration.
 
 ## Demo
 
@@ -95,33 +89,11 @@ Conversation history
 - macOS Spotlight panel <kbd>Ctrl</kbd>+<kbd>⌘</kbd>+<kbd>K</kbd>
 - All features work offline
 
-## Usage instructions
+## Development status
 
-Enchanted requires Ollama v0.1.14 or later.
+This fork is under active development. The initial chat path supports text prompts, Rust SSE text deltas, Rust session/history discovery, Bun model and Rust agent selection, and shared Bun-hosted agent photos. Robust stream reconnect/deduplication, server start/stop scripts, and image prompts are not yet complete. Existing local SwiftData conversations are preserved and are not migrated to Rust sessions.
 
-### Case 1. You run Ollama server with public access
-
-1. Download Enchanted app from the App Store.
-2. In App Settings specify your server endpoint.
-
-You're done! Make a prompt.
-
-### Case 2. You run Ollama on your computer
-
-[Video instructions here](https://www.youtube.com/watch?v=SFeVCiLOABM)
-
-1. Start Ollama server and download models for usage.
-2. Install ngrok and forward your Ollama server to make it publicly accessible
-
-   ```shell
-   ngrok http 11434 --host-header="localhost:11434"
-   ```
-
-3. Copy "Forwarding" URL that will look something like `https://b377-82-132-216-51.ngrok-free.app`. Your Ollama server API is now accessible through this temporary URL.
-4. Download Enchanted app from the App Store.
-5. In App Settings specify your server endpoint.
-
-   You're done! Make a prompt.
+To build, open `Enchanted.xcodeproj` in Xcode and select the Enchanted scheme. The executable’s display name is RuCode Chat. A full app build requires Xcode; command line tools alone are insufficient.
 
 # Contact
 

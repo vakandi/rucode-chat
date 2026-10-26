@@ -4,164 +4,325 @@
 //
 //  Created by Augustinas Malinauskas on 10/12/2023.
 //
+//  RuCode Chat build: this machine runs on Command Line Tools only, where the
+//  SwiftData macro plugin is unavailable. The persistence contract used by the
+//  stores is unchanged, but the backing store is an atomic JSON snapshot in
+//  Application Support instead of a SwiftData container.
+//
 
 import Foundation
-import SwiftData
 
-final actor SwiftDataService: ModelActor {
-    let modelContainer: ModelContainer
-    let modelExecutor: ModelExecutor
-    private let modelContext: ModelContext
-    
+actor SwiftDataService {
+    let modelContainer: Void = ()
+
+    private var models: [LanguageModelSD] = []
+    private var conversations: [ConversationSD] = []
+    private var instructions: [CompletionInstructionSD] = []
+    private let storeURL: URL
+
     static let shared = SwiftDataService()
-    
+
     init() {
-        let sharedModelContainer: ModelContainer = {
-            let schema = Schema([
-                LanguageModelSD.self,
-                ConversationSD.self,
-                MessageSD.self,
-                CompletionInstructionSD.self
-            ])
-            let modelConfiguration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
-            
-            do {
-                return try ModelContainer(for: schema, configurations: [modelConfiguration])
-            } catch {
-                fatalError("Could not create ModelContainer: \(error)")
+        let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? URL(fileURLWithPath: NSTemporaryDirectory())
+        let directory = support.appendingPathComponent("RuCodeChat", isDirectory: true)
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        storeURL = directory.appendingPathComponent("store.json")
+        Self.loadSnapshot(at: storeURL, models: &models, conversations: &conversations, instructions: &instructions)
+    }
+
+    // MARK: - Persistence
+
+    private func persist() {
+        let snapshot = Snapshot(
+            models: models.map(ModelDTO.init),
+            conversations: conversations.map { conversation in
+                ConversationDTO(
+                    id: conversation.id,
+                    name: conversation.name,
+                    createdAt: conversation.createdAt,
+                    updatedAt: conversation.updatedAt,
+                    workDirectory: conversation.workDirectory,
+                    modelName: conversation.model?.name,
+                    messages: conversation.messages.map(MessageDTO.init)
+                )
+            },
+            instructions: instructions.map { InstructionDTO(source: $0) }
+        )
+        do {
+            let encoder = JSONEncoder()
+            encoder.dateEncodingStrategy = .iso8601
+            let data = try encoder.encode(snapshot)
+            try data.write(to: storeURL, options: .atomic)
+        } catch {
+            NSLog("RuCodeChat persistence failure: \(error.localizedDescription)")
+        }
+    }
+
+    private static func loadSnapshot(
+        at url: URL,
+        models: inout [LanguageModelSD],
+        conversations: inout [ConversationSD],
+        instructions: inout [CompletionInstructionSD]
+    ) {
+        guard let data = try? Data(contentsOf: url) else { return }
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        guard let snapshot = try? decoder.decode(Snapshot.self, from: data) else { return }
+
+        models = snapshot.models.map { dto in
+            let model = LanguageModelSD(name: dto.name, imageSupport: dto.imageSupport, modelProvider: dto.provider ?? .opencodeRust)
+            model.isAvailable = dto.isAvailable
+            return model
+        }
+        let modelsByName = Dictionary(uniqueKeysWithValues: models.map { ($0.name, $0) })
+
+        conversations = snapshot.conversations.map { dto in
+            let conversation = ConversationSD(name: dto.name, updatedAt: dto.updatedAt, workDirectory: dto.workDirectory)
+            conversation.id = dto.id
+            conversation.createdAt = dto.createdAt
+            if let modelName = dto.modelName {
+                conversation.model = modelsByName[modelName]
             }
-        }()
-        
-        self.modelContext = ModelContext(sharedModelContainer)
-        self.modelContext.autosaveEnabled = false
-        modelContainer = sharedModelContainer
-        modelExecutor = DefaultSerialModelExecutor(modelContext: modelContext)
+            conversation.messages = dto.messages.map { messageDTO in
+                let message = MessageSD(
+                    content: messageDTO.content,
+                    role: messageDTO.role,
+                    done: messageDTO.done,
+                    error: messageDTO.error,
+                    image: messageDTO.image
+                )
+                message.id = messageDTO.id
+                message.createdAt = messageDTO.createdAt
+                message.conversation = conversation
+                return message
+            }
+            return conversation
+        }
+
+        instructions = snapshot.instructions.map { dto in
+            let instruction = CompletionInstructionSD(
+                name: dto.name,
+                keyboardCharacterStr: dto.keyboardCharacterStr,
+                instruction: dto.instruction,
+                order: dto.order,
+                modelTemperature: dto.modelTemperature ?? 0.8
+            )
+            instruction.id = dto.id
+            return instruction
+        }
+    }
+}
+
+// MARK: - Snapshot DTOs
+
+extension SwiftDataService {
+    fileprivate struct Snapshot: Codable {
+        var models: [ModelDTO]
+        var conversations: [ConversationDTO]
+        var instructions: [InstructionDTO]
+    }
+
+    fileprivate struct ModelDTO: Codable {
+        var name: String
+        var isAvailable: Bool
+        var imageSupport: Bool
+        var provider: ModelProvider?
+
+        init(_ model: LanguageModelSD) {
+            name = model.name
+            isAvailable = model.isAvailable
+            imageSupport = model.imageSupport
+            provider = model.modelProvider
+        }
+    }
+
+    fileprivate struct ConversationDTO: Codable {
+        var id: UUID
+        var name: String
+        var createdAt: Date
+        var updatedAt: Date
+        var workDirectory: String?
+        var modelName: String?
+        var messages: [MessageDTO]
+    }
+
+    fileprivate struct MessageDTO: Codable {
+        var id: UUID
+        var content: String
+        var role: String
+        var done: Bool
+        var error: Bool
+        var createdAt: Date
+        var image: Data?
+
+        init(_ message: MessageSD) {
+            id = message.id
+            content = message.content
+            role = message.role
+            done = message.done
+            error = message.error
+            createdAt = message.createdAt
+            image = message.image
+        }
+    }
+
+    fileprivate struct InstructionDTO: Codable {
+        var id: UUID
+        var name: String
+        var keyboardCharacterStr: String
+        var instruction: String
+        var order: Int
+        var modelTemperature: Float?
+
+        init(source: CompletionInstructionSD) {
+            id = source.id
+            name = source.name
+            keyboardCharacterStr = source.keyboardCharacterStr
+            instruction = source.instruction
+            order = source.order
+            modelTemperature = source.modelTemperature
+        }
     }
 }
 
 // MARK: - Language Models
 extension SwiftDataService {
     func fetchModels() throws -> [LanguageModelSD] {
-        let sortDescriptor = SortDescriptor(\LanguageModelSD.name)
-        let fetchDescriptor = FetchDescriptor<LanguageModelSD>(sortBy: [sortDescriptor])
-        let models = try modelContext.fetch(fetchDescriptor)
-        
-        return models
+        models.sorted { $0.name < $1.name }
     }
-    
-    func saveModels(models: [LanguageModelSD]) throws {
-        for model in models {
-            modelContext.insert(model)
+
+    func saveModels(models incoming: [LanguageModelSD]) throws {
+        for candidate in incoming {
+            if let existing = models.first(where: { $0.name == candidate.name }) {
+                existing.isAvailable = candidate.isAvailable
+                existing.imageSupport = candidate.imageSupport
+                existing.modelProvider = candidate.modelProvider
+            } else {
+                models.append(candidate)
+            }
         }
-        
-        try modelContext.saveChanges()
+        persist()
     }
-    
+
     func deleteModels() throws {
-        try modelContext.delete(model: LanguageModelSD.self)
-        try modelContext.saveChanges()
+        models = []
+        persist()
     }
 }
 
 // MARK: - Conversations
 extension SwiftDataService {
     func createConversation(_ conversation: ConversationSD) throws {
-        self.modelContext.insert(conversation)
-        try modelContext.saveChanges()
+        if !conversations.contains(where: { $0.id == conversation.id }) {
+            conversations.append(conversation)
+        }
+        persist()
     }
-    
+
     func renameConversation(_ conversation: ConversationSD) throws {
-        try modelContext.saveChanges()
+        persist()
     }
-    
+
     func deleteConversation(_ conversation: ConversationSD) throws {
-        self.modelContext.delete(conversation)
-        try modelContext.saveChanges()
+        conversations.removeAll { $0.id == conversation.id }
+        persist()
     }
-    
+
     func updateConversation(_ conversation: ConversationSD) throws {
         conversation.updatedAt = .now
-        try modelContext.saveChanges()
+        if !conversations.contains(where: { $0.id == conversation.id }) {
+            conversations.append(conversation)
+        }
+        persist()
     }
-    
+
     func fetchConversations() throws -> [ConversationSD] {
-        let sortDescriptor = SortDescriptor(\ConversationSD.updatedAt, order: .reverse)
-        let fetchDescriptor = FetchDescriptor<ConversationSD>(sortBy: [sortDescriptor])
-        return try modelContext.fetch(fetchDescriptor)
+        conversations.sorted { $0.updatedAt > $1.updatedAt }
     }
-    
+
     func getConversation(_ conversationId: UUID) throws -> ConversationSD? {
-        let predicate = #Predicate<ConversationSD>{ $0.id == conversationId }
-        let fetchDescriptor = FetchDescriptor<ConversationSD>(predicate: predicate)
-        let conversations = try modelContext.fetch(fetchDescriptor)
-        return conversations.first
+        conversations.first { $0.id == conversationId }
     }
-    
+
     func deleteConversations() throws {
-        try modelContext.delete(model: ConversationSD.self)
-        try modelContext.saveChanges()
+        conversations = []
+        persist()
     }
-    
+
     func deleteMessages() throws {
-        try modelContext.delete(model: MessageSD.self)
-        try modelContext.saveChanges()
+        for conversation in conversations {
+            conversation.messages = []
+        }
+        persist()
     }
-    
+
     func deleteConversations(_ date: Date) throws {
-        let predicate = #Predicate<ConversationSD>{ $0.createdAt >=  date && $0.createdAt <= date}
-        try modelContext.delete(model: ConversationSD.self, where: predicate)
+        let calendar = Calendar.current
+        conversations.removeAll { calendar.isDate($0.createdAt, inSameDayAs: date) }
+        persist()
     }
 }
-
 
 // MARK: - Messages
 extension SwiftDataService {
     func fetchMessages(_ conversationId: UUID) throws -> [MessageSD] {
-        let predicate = #Predicate<MessageSD>{ $0.conversation?.id == conversationId }
-        let sortDescriptor = SortDescriptor(\MessageSD.createdAt)
-        let fetchDescriptor = FetchDescriptor<MessageSD>(predicate: predicate, sortBy: [sortDescriptor])
-        return try modelContext.fetch(fetchDescriptor)
+        guard let conversation = conversations.first(where: { $0.id == conversationId }) else { return [] }
+        return conversation.messages.sorted { $0.createdAt < $1.createdAt }
     }
-    
+
     func updateMessage(_ message: MessageSD) throws {
-        try modelContext.saveChanges()
+        attach(message)
+        persist()
     }
-    
-    func createMessage(_ mesasge: MessageSD) throws {
-        self.modelContext.insert(mesasge)
-        try modelContext.saveChanges()
+
+    func createMessage(_ message: MessageSD) throws {
+        attach(message)
+        persist()
+    }
+
+    private func attach(_ message: MessageSD) {
+        guard let conversation = message.conversation else { return }
+        if !conversations.contains(where: { $0.id == conversation.id }) {
+            conversations.append(conversation)
+        }
+        if !conversation.messages.contains(where: { $0.id == message.id }) {
+            conversation.messages.append(message)
+        }
     }
 }
 
 // MARK: - CompletionInstruction
 extension SwiftDataService {
     func fetchCompletionInstructions() throws -> [CompletionInstructionSD] {
-        let sortDescriptor = SortDescriptor(\CompletionInstructionSD.order, order: .forward)
-        let fetchDescriptor = FetchDescriptor<CompletionInstructionSD>(sortBy: [sortDescriptor])
-        return try modelContext.fetch(fetchDescriptor)
+        instructions.sorted { $0.order < $1.order }
     }
-    
-    func updateCompletionInstructions(_ instructions: [CompletionInstructionSD]) throws {
-        for index in instructions.indices {
-            instructions[index].order = index
-            modelContext.insert(instructions[index])
+
+    func updateCompletionInstructions(_ incoming: [CompletionInstructionSD]) throws {
+        for index in incoming.indices {
+            incoming[index].order = index
+            let instruction = incoming[index]
+            if let existingIndex = instructions.firstIndex(where: { $0.id == instruction.id }) {
+                instructions[existingIndex] = instruction
+            } else {
+                instructions.append(instruction)
+            }
         }
-        try modelContext.saveChanges()
+        persist()
     }
-    
+
     func deleteCompletionInstruction(_ instruction: CompletionInstructionSD) throws {
-        self.modelContext.delete(instruction)
-        try modelContext.saveChanges()
+        instructions.removeAll { $0.id == instruction.id }
+        persist()
     }
 }
 
 // MARK: - General
 extension SwiftDataService {
     func deleteEverything() throws {
-        try modelContext.delete(model: ConversationSD.self)
-        try modelContext.delete(model: LanguageModelSD.self)
-        try modelContext.delete(model: MessageSD.self)
-        try modelContext.delete(model: CompletionInstructionSD.self)
-        try modelContext.saveChanges()
+        conversations = []
+        models = []
+        instructions = []
+        persist()
     }
 }

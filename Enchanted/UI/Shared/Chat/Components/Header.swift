@@ -8,6 +8,8 @@
 import SwiftUI
 
 struct Header: View {
+    var selectedModel: LanguageModelSD
+
     var body: some View {
         VStack {
             HStack(alignment: .center) {

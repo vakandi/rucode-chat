@@ -6,7 +6,6 @@
 //
 
 import Foundation
-import SwiftData
 
 @Observable
 final class LanguageModelStore {
@@ -25,7 +24,7 @@ final class LanguageModelStore {
     func setModel(model: LanguageModelSD?) {
         if let model = model {
             // check if model still exists
-            if models.contains(model) {
+            if models.contains(where: { $0.name == model.name }) {
                 selectedModel = model
             }
         } else {
@@ -47,13 +46,13 @@ final class LanguageModelStore {
     }
     
     func loadModels() async throws {
-        let remoteModels = try await OllamaService.shared.getModels()
-        try await swiftDataService.saveModels(models: remoteModels.map{LanguageModelSD(name: $0.name, imageSupport: $0.imageSupport, modelProvider: .ollama)})
+        let remoteModels = try await RuCodeAPI.shared.models()
+        try await swiftDataService.saveModels(models: remoteModels.map { LanguageModelSD(name: $0.id, imageSupport: false, modelProvider: .opencodeRust) })
         
         let storedModels = (try? await swiftDataService.fetchModels()) ?? []
         
         DispatchQueue.main.async {
-            let remoteModelNames = remoteModels.map { $0.name }
+            let remoteModelNames = remoteModels.map { $0.id }
             self.models = storedModels.filter{remoteModelNames.contains($0.name)}
         }
     }

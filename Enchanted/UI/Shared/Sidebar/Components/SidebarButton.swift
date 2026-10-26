@@ -28,7 +28,7 @@ struct SidebarButton: View {
                 Spacer()
             }
             .padding(8)
-            .foregroundColor(Color(.label))
+            .foregroundColor(Color.labelCustom)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)

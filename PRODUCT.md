@@ -1,4 +1,4 @@
-# Product
+# RuCode Chat product
 
 ## Register
 
@@ -6,11 +6,11 @@ product
 
 ## Users
 
-People using Enchanted are running or connecting to Ollama-compatible private model servers from Apple devices. They use the app for chat, voice prompts, image prompts, completions, and local conversation history.
+People using RuCode Chat connect Apple devices to an OpenCodeRust server and Bun control plane. They use the retained Enchanted chat UI for model and Rust-agent selection, directory-scoped sessions, streamed text responses, and shared configured-agent profiles.
 
 ## Product Purpose
 
-Enchanted provides a familiar chat interface for privately hosted language models across macOS, iOS, and visionOS. Success means users can connect their endpoint, pick a model, and use private multimodal workflows without sending conversation data to a third-party app service.
+RuCode Chat reuses Enchanted's familiar chat interface across macOS, iOS, and visionOS while routing prompts and session history to OpenCodeRust and model/control metadata to Bun. Success means users can configure a reachable server, select a model and engine agent, and continue a directory-scoped session while legacy local conversations remain intact.
 
 ## Brand Personality
 
@@ -22,11 +22,11 @@ Avoid cloud-first AI dashboards, busy marketing-heavy screens, and custom contro
 
 ## Design Principles
 
-- Make private model setup understandable.
+- Make Bun and Rust server setup understandable, including local versus remote reachability.
 - Keep common chat actions visible and predictable.
 - Respect Apple platform conventions before adding custom styling.
 - Use accent color for action and state, not decoration.
-- Keep offline and local-data behavior explicit.
+- Keep local history, remote Rust sessions, and their migration behavior explicit.
 
 ## Accessibility & Inclusion
 

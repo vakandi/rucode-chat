@@ -104,11 +104,11 @@ struct ChatView: View {
                     .buttonStyle(PlainButtonStyle())
                     .showIf(columnVisibility == .detailOnly)
                     
-                    Text("Enchanted")
+                    Text("RuChat")
                 }
                 #else
                 ToolbarItem(placement: .navigation) {
-                    Text("Enchanted")
+                    Text("RuChat")
                 }
                 #endif
 

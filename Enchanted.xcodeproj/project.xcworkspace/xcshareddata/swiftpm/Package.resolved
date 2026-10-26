@@ -47,15 +47,6 @@
       }
     },
     {
-      "identity" : "ollamakit",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/AugustDev/OllamaKit",
-      "state" : {
-        "branch" : "main",
-        "revision" : "0079411b4568dbc821c9e2589345d3f9b9538af4"
-      }
-    },
-    {
       "identity" : "sauce",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/Clipy/Sauce",

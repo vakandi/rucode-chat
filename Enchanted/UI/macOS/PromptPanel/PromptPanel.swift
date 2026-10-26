@@ -10,7 +10,6 @@ import SwiftUI
 
 struct PromptPanel: View {
     @AppStorage("colorScheme") private var colorScheme: AppColorScheme = .system
-    @AppStorage("systemPrompt") private var systemPrompt: String = ""
     @State var conversationStore = ConversationStore.shared
     @State var languageModelStore = LanguageModelStore.shared
     @State var completionsStore = CompletionsStore.shared
@@ -26,8 +25,7 @@ struct PromptPanel: View {
         conversationStore.sendPrompt(
             userPrompt: prompt,
             model: languageModelStore.selectedModel!,
-            image: image,
-            systemPrompt: systemPrompt
+            image: image
         )
         onSubmitPanel()
     }

@@ -82,8 +82,8 @@ struct PanelCompletionsView: View {
             }
             .padding(.vertical, 4)
             .padding(.horizontal, 8)
-            .foregroundStyle(.label)
-            .background(RoundedRectangle(cornerRadius: 5).fill(.bgCustom))
+            .foregroundStyle(Color.labelCustom)
+            .background(RoundedRectangle(cornerRadius: 5).fill(Color.bgCustom))
             
         }
         .buttonStyle(GrowingButton())
@@ -125,8 +125,8 @@ struct PanelCompletionsView: View {
         }
         .padding(.vertical, 4)
         .padding(.horizontal, 8)
-        .foregroundStyle(.label)
-        .background(RoundedRectangle(cornerRadius: 5).fill(.bgCustom))
+        .foregroundStyle(Color.labelCustom)
+        .background(RoundedRectangle(cornerRadius: 5).fill(Color.bgCustom))
         .matchedGeometryEffect(id: "customCommand", in: animation)
         .padding(.bottom, 10)
     }
@@ -139,7 +139,7 @@ struct PanelCompletionsView: View {
                     .antialiased(true)
                     .scaledToFit()
                     .frame(width: 20)
-                    .foregroundColor(.label)
+                    .foregroundColor(Color.labelCustom)
                 
                 Text("Completions")
                     .font(.title2)
@@ -193,7 +193,7 @@ struct PanelCompletionsView: View {
                             .font(.caption2)
                             .padding(.horizontal, 7)
                             .padding(.vertical, 2)
-                            .background(RoundedRectangle(cornerRadius: 3).fill(.bgCustom))
+                            .background(RoundedRectangle(cornerRadius: 3).fill(Color.bgCustom))
                         
                         Text("+")
                             .font(.footnote)
@@ -202,7 +202,7 @@ struct PanelCompletionsView: View {
                             .font(.caption2)
                             .padding(.horizontal, 7)
                             .padding(.vertical, 2)
-                            .background(RoundedRectangle(cornerRadius: 3).fill(.bgCustom))
+                            .background(RoundedRectangle(cornerRadius: 3).fill(Color.bgCustom))
                     }
                         
                 }

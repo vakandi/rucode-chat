@@ -64,8 +64,7 @@ final class AppStore {
     }
 
     private func reachable() async -> Bool {
-        let status = await OllamaService.shared.reachable()
-        return status
+        await RuCodeAPI.shared.isControlReachable()
     }
     
     @MainActor func uiLog(message: String, status: NotificationMessage.Status) {

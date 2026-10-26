@@ -7,26 +7,76 @@
 
 import SwiftUI
 import AVFoundation
+import UniformTypeIdentifiers
+#if os(macOS)
+import AppKit
+#else
+import UIKit
+#endif
 
 struct SettingsView: View {
     @Environment(\.presentationMode) var presentationMode
-    @Binding var ollamaUri: String
-    @Binding var systemPrompt: String
     @Binding var vibrations: Bool
     @Binding var colorScheme: AppColorScheme
-    @Binding var defaultOllamModel: String
-    @Binding var ollamaBearerToken: String
+    @Binding var defaultModel: String
     @Binding var appUserInitials: String
     @Binding var pingInterval: String
     @Binding var voiceIdentifier: String
-    @State var ollamaStatus: Bool?
     var save: () -> ()
-    var checkServer: () -> ()
     var deleteAll: () -> ()
-    var ollamaLangugeModels: [LanguageModelSD]
+    var models: [LanguageModelSD]
     var voices: [AVSpeechSynthesisVoice]
     
     @State private var deleteConversationsDialog = false
+    @AppStorage("rucodeControlURL") private var rucodeControlURL = "http://127.0.0.1:5656"
+    @AppStorage("rucodeEngineURL") private var rucodeEngineURL = "http://127.0.0.1:4096"
+    @State private var rucodeAuthToken = ""
+    @AppStorage("rucodeWorkingDirectory") private var rucodeWorkingDirectory = NSHomeDirectory() + "/Documents"
+    @AppStorage("rucodeRepositoryPath") private var rucodeRepositoryPath = ""
+    @AppStorage("rucodeSelectedAgent") private var rucodeSelectedAgent = ""
+    @State private var rucodeHealth = "Not checked"
+    @State private var isCheckingRuCode = false
+    @State private var engineAgents: [RuCodeEngineAgent] = []
+    @State private var configuredAgents: [RuCodeConfiguredAgents.Agent] = []
+    @State private var agentPhotos: [String: Data] = [:]
+    @State private var selectedPhotoAgent: String?
+    @State private var showAgentPhotoImporter = false
+    @State private var schedulingAgent: RuCodeConfiguredAgents.Agent?
+    @State private var agentEnableConfirmation: RuCodeConfiguredAgents.Agent?
+
+    @MainActor
+    private func refreshConfiguredAgents() async {
+        do {
+            configuredAgents = try await RuCodeAPI.shared.configuredAgents()
+            for agent in configuredAgents {
+                if let data = try? await RuCodeAPI.shared.agentPhoto(agent.name) { agentPhotos[agent.name] = data }
+            }
+        } catch { /* Health and auth status already appears above. */ }
+    }
+
+    private func imageContentType(for url: URL) -> String? {
+        switch url.pathExtension.lowercased() {
+        case "jpg", "jpeg": return "image/jpeg"
+        case "png": return "image/png"
+        case "webp": return "image/webp"
+        default: return nil
+        }
+    }
+
+    @ViewBuilder
+    private func agentPhoto(_ name: String) -> some View {
+        if let data = agentPhotos[name] {
+#if os(macOS)
+            if let image = NSImage(data: data) { Image(nsImage: image).resizable().scaledToFill().frame(width: 38, height: 38).clipShape(Circle()) }
+            else { Image(systemName: "person.crop.circle.fill").font(.system(size: 38)) }
+#else
+            if let image = UIImage(data: data) { Image(uiImage: image).resizable().scaledToFill().frame(width: 38, height: 38).clipShape(Circle()) }
+            else { Image(systemName: "person.crop.circle.fill").font(.system(size: 38)) }
+#endif
+        } else {
+            Image(systemName: "person.crop.circle.fill").font(.system(size: 38)).foregroundStyle(.secondary)
+        }
+    }
     
     var body: some View {
         VStack {
@@ -37,7 +87,7 @@ struct SettingsView: View {
                     } label: {
                         Text("Cancel")
                             .font(.system(size: 16))
-                            .foregroundStyle(Color(.label))
+                            .foregroundStyle(Color.primary)
                     }
                     
                     
@@ -46,7 +96,7 @@ struct SettingsView: View {
                     Button(action: save) {
                         Text("Save")
                             .font(.system(size: 16))
-                            .foregroundStyle(Color(.label))
+                            .foregroundStyle(Color.primary)
                     }
                 }
                 
@@ -55,58 +105,144 @@ struct SettingsView: View {
                     Text("Settings")
                         .font(.system(size: 16))
                         .fontWeight(.medium)
-                        .foregroundStyle(Color(.label))
+                        .foregroundStyle(Color.primary)
                     Spacer()
                 }
             }
             .padding()
             
             Form {
-                Section(header: Text("Ollama").font(.headline)) {
-                    
-                    TextField("Ollama server URI", text: $ollamaUri, onCommit: checkServer)
+                Section(header: Text("OpenCodeRust Server").font(.headline)) {
+                    TextField("Bun control URL", text: $rucodeControlURL)
                         .textContentType(.URL)
                         .disableAutocorrection(true)
                         .textFieldStyle(RoundedBorderTextFieldStyle())
-#if !os(macOS)
-                        .padding(.top, 8)
-                        .keyboardType(.URL)
-                        .autocapitalization(.none)
-#endif
-                    
-                    VStack(alignment: .leading) {
-                        Text("System prompt")
-                        TextEditor(text: $systemPrompt)
-                            .font(.system(size: 13))
-                            .cornerRadius(4)
-                            .multilineTextAlignment(.leading)
-                            .frame(minHeight: 100)
+                    TextField("Rust engine URL", text: $rucodeEngineURL)
+                        .textContentType(.URL)
+                        .disableAutocorrection(true)
+                        .textFieldStyle(RoundedBorderTextFieldStyle())
+                    SecureField("ELIA_AUTH_TOKEN", text: $rucodeAuthToken)
+                        .textFieldStyle(RoundedBorderTextFieldStyle())
+                    TextField("Server-visible working directory", text: $rucodeWorkingDirectory)
+                        .disableAutocorrection(true)
+                        .textFieldStyle(RoundedBorderTextFieldStyle())
+                    TextField("OpenCodeRust repository path (lifecycle controls)", text: $rucodeRepositoryPath)
+                        .disableAutocorrection(true)
+                        .textFieldStyle(RoundedBorderTextFieldStyle())
+                    Picker("Prompt agent", selection: $rucodeSelectedAgent) {
+                        Text("Server default").tag("")
+                        ForEach(engineAgents) { agent in
+                            Text(agent.id).tag(agent.id)
+                        }
                     }
-                    
-                    Picker(selection: $defaultOllamModel) {
-                        ForEach(ollamaLangugeModels, id:\.self) { model in
+                    HStack {
+                        Text("Engine health")
+                        Spacer()
+                        Text(rucodeHealth).foregroundStyle(.secondary)
+                    }
+                    HStack {
+                        Button("Check health") {
+                            isCheckingRuCode = true
+                            Task {
+                                defer { isCheckingRuCode = false }
+                                do {
+                                    let result = try await RuCodeAPI.shared.serverHealth()
+                                    rucodeHealth = "\(result.health_status ?? "unknown") · \(result.child?.status ?? "no child status")"
+                                    engineAgents = try await RuCodeAPI.shared.engineAgents()
+                                    await refreshConfiguredAgents()
+                                } catch {
+                                    rucodeHealth = error.localizedDescription
+                                }
+                            }
+                        }
+                        .disabled(isCheckingRuCode)
+                        Button("Restart Rust child") {
+                            isCheckingRuCode = true
+                            Task {
+                                defer { isCheckingRuCode = false }
+                                do {
+                                    try await RuCodeAPI.shared.restartChild()
+                                    let result = try await RuCodeAPI.shared.serverHealth()
+                                    rucodeHealth = "\(result.health_status ?? "unknown") · \(result.child?.status ?? "no child status")"
+                                    engineAgents = try await RuCodeAPI.shared.engineAgents()
+                                    await refreshConfiguredAgents()
+                                } catch {
+                                    rucodeHealth = error.localizedDescription
+                                }
+                            }
+                        }
+                        .disabled(isCheckingRuCode)
+                    }
+                    Text("General chat uses the Rust engine. Model choices come from Bun control. These URLs must be reachable from this device.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                    if !configuredAgents.isEmpty {
+                        Divider()
+                        Text("Configured Bun subworkers and shared profiles").font(.subheadline.weight(.medium))
+                        ForEach(configuredAgents) { agent in
+                            VStack(alignment: .leading, spacing: 10) {
+                                HStack(spacing: 10) {
+                                    agentPhoto(agent.name)
+                                    VStack(alignment: .leading) {
+                                        Text(agent.name).font(.subheadline.weight(.medium))
+                                        Text(agent.running ? "Running" : agent.enabled ? "Enabled" : "Disabled")
+                                            .font(.caption).foregroundStyle(.secondary)
+                                    }
+                                    Spacer()
+                                    Button(agent.enabled ? "Disable" : "Enable and run") {
+                                        if agent.enabled {
+                                            Task {
+                                                do {
+                                                    try await RuCodeAPI.shared.setAgentEnabled(agent.name, enabled: false)
+                                                    await refreshConfiguredAgents()
+                                                } catch { rucodeHealth = error.localizedDescription }
+                                            }
+                                        } else {
+                                            agentEnableConfirmation = agent
+                                        }
+                                    }
+                                    Button("Change photo") { selectedPhotoAgent = agent.name; showAgentPhotoImporter = true }
+                                    if agentPhotos[agent.name] != nil {
+                                        Button("Remove") {
+                                            Task {
+                                                do {
+                                                    try await RuCodeAPI.shared.deleteAgentPhoto(agent.name)
+                                                    agentPhotos[agent.name] = nil
+                                                } catch { rucodeHealth = error.localizedDescription }
+                                            }
+                                        }
+                                    }
+                                }
+                                Button {
+                                    schedulingAgent = agent
+                                } label: {
+                                    HStack {
+                                        Image(systemName: "clock")
+                                        Text("Schedule: \(ScheduleEditorView.summary(agent.schedule))")
+                                        Spacer()
+                                        Image(systemName: "chevron.right").foregroundStyle(.secondary)
+                                    }
+                                }
+                                .buttonStyle(.bordered)
+                            }
+                        }
+                    }
+                }
+
+                Section(header: Text("Chat").font(.headline)) {
+                    Picker(selection: $defaultModel) {
+                        ForEach(models, id:\.self) { model in
                             Text(model.name).tag(model.name)
                         }
                     } label: {
                         Label {
                             Text("Default Model")
                         } icon: {
-                            Image("ollama")
-                                .renderingMode(.template)
-                                .resizable()
-                                .scaledToFit()
-                                .foregroundColor(Color(.label))
-                                .frame(width: 24, height: 24)
+                            Image(systemName: "cpu")
                         }
                     }
                     
                     
-                    TextField("Bearer Token", text: $ollamaBearerToken)
-                        .disableAutocorrection(true)
-                        .textFieldStyle(RoundedBorderTextFieldStyle())
-#if os(iOS)
-                        .autocapitalization(.none)
-#endif
                     TextField("Ping Interval (seconds)", text: $pingInterval)
                         .disableAutocorrection(true)
                         .textFieldStyle(RoundedBorderTextFieldStyle())
@@ -116,7 +252,7 @@ struct SettingsView: View {
 #if os(iOS)
                         Toggle(isOn: $vibrations, label: {
                             Label("Vibrations", systemImage: "water.waves")
-                                .foregroundStyle(Color.label)
+                                .foregroundStyle(Color.primary)
                         })
 #endif
                     }
@@ -128,7 +264,7 @@ struct SettingsView: View {
                         }
                     } label: {
                         Label("Appearance", systemImage: "sun.max")
-                            .foregroundStyle(Color.label)
+                            .foregroundStyle(Color.primary)
                     }
                     
                     Picker(selection: $voiceIdentifier) {
@@ -137,7 +273,7 @@ struct SettingsView: View {
                         }
                     } label: {
                         Label("Voice", systemImage: "waveform")
-                            .foregroundStyle(Color.label)
+                            .foregroundStyle(Color.primary)
                         
 #if os(macOS)
                         Text("Download voices by going to Settings > Accessibility > Spoken Content > System Voice > Manage Voices.")
@@ -178,7 +314,7 @@ struct SettingsView: View {
                             Spacer()
                             
                             Text("Clear All Data")
-                                .foregroundStyle(Color(.systemRed))
+                                .foregroundStyle(Color.red)
                                 .padding(.vertical, 6)
                             
                             Spacer()
@@ -195,24 +331,74 @@ struct SettingsView: View {
         } message: {
             Text("Delete All Conversations?")
         }
+        .confirmationDialog("Enable \(agentEnableConfirmation?.name ?? "subworker")?", isPresented: Binding(
+            get: { agentEnableConfirmation != nil },
+            set: { if !$0 { agentEnableConfirmation = nil } }
+        )) {
+            Button("Enable and run now") {
+                guard let agent = agentEnableConfirmation else { return }
+                agentEnableConfirmation = nil
+                Task {
+                    do {
+                        try await RuCodeAPI.shared.setAgentEnabled(agent.name, enabled: true)
+                        await refreshConfiguredAgents()
+                    } catch { rucodeHealth = error.localizedDescription }
+                }
+            }
+            Button("Cancel", role: .cancel) { agentEnableConfirmation = nil }
+        } message: {
+            Text("Enabling this subworker immediately triggers its configured task.")
+        }
+        .sheet(item: $schedulingAgent) { agent in
+            ScheduleEditorView(
+                agentName: agent.name,
+                photo: agentPhotos[agent.name],
+                schedule: agent.schedule
+            ) { schedule in
+                try await RuCodeAPI.shared.setAgentSchedule(agent.name, schedule: schedule)
+                await refreshConfiguredAgents()
+            }
+        }
+        .fileImporter(isPresented: $showAgentPhotoImporter, allowedContentTypes: [.image], allowsMultipleSelection: false) { result in
+            guard let agent = selectedPhotoAgent else { return }
+            Task {
+                do {
+                    guard let url = try result.get().first, let contentType = imageContentType(for: url) else { return }
+                    let accessed = url.startAccessingSecurityScopedResource()
+                    defer { if accessed { url.stopAccessingSecurityScopedResource() } }
+                    let data = try Data(contentsOf: url)
+                    try await RuCodeAPI.shared.uploadAgentPhoto(agent, data: data, contentType: contentType)
+                    agentPhotos[agent] = data
+                } catch { rucodeHealth = error.localizedDescription }
+            }
+        }
+        .onAppear {
+            if let token = RuCodeCredentialStore.load() {
+                rucodeAuthToken = token
+            } else if let legacyToken = UserDefaults.standard.string(forKey: "rucodeAuthToken") {
+                rucodeAuthToken = legacyToken
+                RuCodeCredentialStore.save(legacyToken)
+                UserDefaults.standard.removeObject(forKey: "rucodeAuthToken")
+            }
+        }
+        .onChange(of: rucodeAuthToken) { _, token in
+            RuCodeCredentialStore.save(token)
+            UserDefaults.standard.removeObject(forKey: "rucodeAuthToken")
+        }
     }
 }
 
 #Preview {
     SettingsView(
-        ollamaUri: .constant(""),
-        systemPrompt: .constant("You are an intelligent assistant solving complex problems. You are an intelligent assistant solving complex problems. You are an intelligent assistant solving complex problems."),
         vibrations: .constant(true),
         colorScheme: .constant(.light),
-        defaultOllamModel: .constant("llama2"),
-        ollamaBearerToken: .constant("x"),
+        defaultModel: .constant("opencode/example-model"),
         appUserInitials: .constant("AM"),
         pingInterval: .constant("5"),
         voiceIdentifier: .constant("sample"),
         save: {},
-        checkServer: {},
         deleteAll: {},
-        ollamaLangugeModels: LanguageModelSD.sample,
+        models: LanguageModelSD.sample,
         voices: []
     )
 }

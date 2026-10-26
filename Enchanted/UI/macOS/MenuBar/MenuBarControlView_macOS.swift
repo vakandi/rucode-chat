@@ -15,8 +15,8 @@ struct MenuBarControlView: View {
             Grid(horizontalSpacing: 12, verticalSpacing: 12) {
                 GridRow {
                     HStack {
-                        ControlView(icon: "checkmark.circle", title: "Ollama", subtitle: "Online")
-                        ControlView(icon: "x.circle", title: "Enchanted", subtitle: "Online")
+                        ControlView(icon: "checkmark.circle", title: "OpenCodeRust", subtitle: "Online")
+                        ControlView(icon: "x.circle", title: "RuChat", subtitle: "Online")
                     }
                     .padding(12)
                     .background {

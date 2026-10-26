@@ -14,18 +14,18 @@ struct UnreachableAPIView: View {
     var body: some View {
         HStack(alignment: .center, spacing: 12) {
             VStack(alignment: .leading, spacing: 4) {
-                Text("Ollama is unreachable. Go to Settings and update your Ollama API endpoint.")
+                Text("OpenCodeRust is unreachable. Check the Bun control and Rust engine URLs in Settings.")
                     .lineLimit(nil)
                     .fontWeight(.medium)
                     .font(.system(size: 14))
-                    .foregroundStyle(Color(.label))
+                    .foregroundStyle(Color.labelCustom)
             }
             
             Spacer()
             
             ActivityIndicatorView(isVisible: .constant(true), type: .growingCircle)
                 .frame(width: 21, height: 21)
-                .accessibilityLabel(Text("Checking Ollama connection"))
+                    .accessibilityLabel(Text("Checking OpenCodeRust connection"))
             
             Button(action: { showSettings.toggle() }) {
                 Label("Settings", systemImage: "gearshape")

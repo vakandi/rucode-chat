@@ -18,15 +18,17 @@ struct InputFieldsView: View {
     @State var isRecording = false
     
     @State private var selectedImage: Image?
+    @State private var attachedFiles: [URL] = []
     @State private var fileDropActive: Bool = false
     @State private var fileSelectingActive: Bool = false
+    @State private var documentSelectingActive: Bool = false
     @FocusState private var isFocusedInput: Bool
     
     @MainActor private func sendMessage() {
         guard let selectedModel = selectedModel else { return }
         
         onSendMessageTap(
-            message,
+            promptWithAttachments(),
             selectedModel,
             selectedImage,
             editMessage?.id.uuidString
@@ -36,8 +38,57 @@ struct InputFieldsView: View {
             isFocusedInput = false
             editMessage = nil
             selectedImage = nil
+            attachedFiles = []
             message = ""
         }
+    }
+    
+    /// The server only receives text, so attachments travel as their absolute
+    /// paths on their own lines, ahead of whatever the user typed.
+    private func promptWithAttachments() -> String {
+        guard !attachedFiles.isEmpty else { return message }
+        let listing = attachedFiles.map { "- \($0.path)" }.joined(separator: "\n")
+        return "Attached files:\n\(listing)\n\n\(message)"
+    }
+    
+    private func fileIcon(for url: URL) -> String {
+        switch url.pathExtension.lowercased() {
+        case "png", "jpg", "jpeg", "gif", "webp", "heic", "heif", "tiff", "bmp":
+            return "photo.fill"
+        case "pdf":
+            return "doc.richtext.fill"
+        case "swift", "py", "ts", "tsx", "js", "jsx", "rs", "go", "java", "rb", "sh", "zsh", "json", "yml", "yaml", "toml", "md", "txt", "html", "css", "sql":
+            return "chevron.left.forwardslash.chevron.right"
+        case "zip", "tar", "gz", "rar", "7z", "dmg":
+            return "doc.zipper"
+        case "csv", "xlsx", "xls", "numbers":
+            return "tablecells"
+        default:
+            return "doc.fill"
+        }
+    }
+    
+    private func attachmentChip(_ url: URL) -> some View {
+        HStack(spacing: 4) {
+            Image(systemName: fileIcon(for: url))
+                .font(.system(size: 10, weight: .semibold))
+            Text(url.lastPathComponent)
+                .font(.system(size: 11, weight: .medium))
+                .lineLimit(1)
+            Button {
+                attachedFiles.removeAll { $0 == url }
+            } label: {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.system(size: 10))
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .foregroundStyle(Color.accentColor)
+        .background(Capsule().fill(Color.accentColor.opacity(0.14)))
+        .overlay(Capsule().strokeBorder(Color.accentColor.opacity(0.35)))
+        .help(url.path)
     }
     
     private func updateSelectedImage(_ image: Image) {
@@ -69,28 +120,42 @@ struct InputFieldsView: View {
             }
             
             ZStack(alignment: .trailing) {
-                TextField("Message", text: $message.animation(.easeOut(duration: 0.3)), axis: .vertical)
-                    .focused($isFocusedInput)
-                    .font(.system(size: 14))
-                    .frame(maxWidth:.infinity, minHeight: 40)
-                    .clipped()
-                    .textFieldStyle(.plain)
-#if os(macOS)
-                    .onSubmit {
-                        if NSApp.currentEvent?.modifierFlags.contains(.shift) == true {
-                            message += "\n"
-                        } else {
-                            sendMessage()
+                VStack(alignment: .leading, spacing: 6) {
+                    if !attachedFiles.isEmpty {
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 6) {
+                                ForEach(attachedFiles, id: \.self) { url in
+                                    attachmentChip(url)
+                                }
+                            }
+                            .padding(.top, 6)
                         }
+                        .frame(maxHeight: 30)
                     }
-#endif
-                /// TextField bypasses drop area
-                    .allowsHitTesting(!fileDropActive)
+
+                    TextField("Message", text: $message.animation(.easeOut(duration: 0.3)), axis: .vertical)
+                        .focused($isFocusedInput)
+                        .font(.system(size: 14))
+                        .frame(maxWidth:.infinity, minHeight: 40)
+                        .clipped()
+                        .textFieldStyle(.plain)
 #if os(macOS)
-                    .addCustomHotkeys(hotkeys)
+                        .onSubmit {
+                            if NSApp.currentEvent?.modifierFlags.contains(.shift) == true {
+                                message += "\n"
+                            } else {
+                                sendMessage()
+                            }
+                        }
 #endif
-                    .padding(.trailing, 80)
-                
+                    /// TextField bypasses drop area
+                        .allowsHitTesting(!fileDropActive)
+#if os(macOS)
+                        .addCustomHotkeys(hotkeys)
+#endif
+                        .padding(.leading, 28)
+                        .padding(.trailing, 80)
+                }
                 
                 HStack {
                     RecordingView(isRecording: $isRecording.animation()) { transcription in
@@ -123,10 +188,28 @@ struct InputFieldsView: View {
                             SimpleFloatingButton(systemImage: "square.fill", onClick: onStopGenerateTap)
                         default:
                             SimpleFloatingButton(systemImage: "paperplane.fill", onClick: { Task { sendMessage() } })
-                                .showIf(!message.isEmpty)
+                                .showIf(!message.isEmpty || !attachedFiles.isEmpty)
                         }
                     }
                     
+                }
+            }
+            .overlay(alignment: .bottomLeading) {
+                SimpleFloatingButton(systemImage: "paperclip") {
+                    documentSelectingActive = true
+                }
+                .padding(.leading, 6)
+                .padding(.bottom, 11)
+                .help("Attach a file — its absolute path is sent with the message")
+            }
+            .fileImporter(
+                isPresented: $documentSelectingActive,
+                allowedContentTypes: [.item],
+                allowsMultipleSelection: true
+            ) { result in
+                guard case .success(let urls) = result else { return }
+                for url in urls where !attachedFiles.contains(url) {
+                    attachedFiles.append(url)
                 }
             }
             

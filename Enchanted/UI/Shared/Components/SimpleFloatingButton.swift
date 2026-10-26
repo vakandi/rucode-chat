@@ -17,7 +17,7 @@ struct SimpleFloatingButton: View {
                 .renderingMode(.template)
                 .resizable()
                 .scaledToFit()
-                .foregroundColor(Color.label)
+                .foregroundColor(Color.labelCustom)
                 .frame(height: 18)
         }
         .buttonStyle(GrowingButton())

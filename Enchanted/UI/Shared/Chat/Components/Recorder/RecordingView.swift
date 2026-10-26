@@ -52,7 +52,7 @@ struct RecordingView: View {
                     .resizable()
                     .scaledToFit()
                     .frame(height: 20)
-                    .foregroundStyle(Color(.systemGray))
+                    .foregroundStyle(Color(nsColor: .systemGray))
             }
         }
         .buttonStyle(PlainButtonStyle())

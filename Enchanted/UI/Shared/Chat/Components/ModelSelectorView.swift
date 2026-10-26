@@ -50,7 +50,7 @@ struct ModelSelectorView: View {
                     .resizable()
                     .scaledToFit()
                     .frame(width: 10)
-                    .foregroundColor(Color(.label))
+                    .foregroundColor(Color.labelCustom)
                     .showIf(showChevron)
             }
         }

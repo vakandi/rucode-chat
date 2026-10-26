@@ -12,13 +12,11 @@ import Splash
 
 struct ChatMessageView: View {
     @Environment(\.colorScheme) var colorScheme
-    @StateObject private var speechSynthesizer = SpeechSynthesizer.shared
     var message: MessageSD
     var showLoader: Bool = false
     var userInitials: String
     @Binding var editMessage: MessageSD?
     @State private var mouseHover = false
-    @State private var isSpeaking = false
     @State private var showThink = false
     
     var roleName: String  {
@@ -124,39 +122,6 @@ struct ChatMessageView: View {
                 }
                 .buttonStyle(GrowingButton())
                 .clipShape(RoundedRectangle(cornerRadius: 10))
-                
-                /// Play button
-                Button(action: {
-                    Task {
-                        await speechSynthesizer.stopSpeaking()
-                        await speechSynthesizer.speak(text: message.content, onFinished: { isSpeaking = false })
-                        DispatchQueue.main.asyncAfter(deadline: .now()+0.1) {
-                            isSpeaking = true
-                        }
-                    }
-                }) {
-                    Image(systemName: "speaker.wave.2.fill")
-                        .frame(width: 10)
-                        .padding(8)
-                }
-                .buttonStyle(GrowingButton())
-                .clipShape(RoundedRectangle(cornerRadius: 10))
-                .showIf(!isSpeaking)
-                
-                /// Stop button
-                Button(action: {
-                    Task {
-                        isSpeaking = false
-                        await speechSynthesizer.stopSpeaking()
-                    }
-                }) {
-                    Image(systemName: "speaker.slash.fill")
-                        .frame(width: 10)
-                        .padding(8)
-                }
-                .buttonStyle(GrowingButton())
-                .clipShape(RoundedRectangle(cornerRadius: 10))
-                .showIf(isSpeaking)
                 
                 /// Edit button
                 Button(action: {editMessage = message}) {

@@ -20,7 +20,7 @@ struct DragAndDrop: View {
                 Text("Drop your image here")
                     .font(.title2)
             }
-            .foregroundColor(.label)
+            .foregroundColor(Color.labelCustom)
         }
         .overlay(
             RoundedRectangle(cornerRadius: cornerRadius)

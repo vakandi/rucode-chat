@@ -44,13 +44,13 @@ struct ConversationHistoryList: View {
     
     var body: some View {
         VStack(alignment: .leading, spacing: 17) {
-            ForEach(conversationGroups, id:\.self) { conversationGroup in
+            ForEach(conversationGroups, id: \.date) { conversationGroup in
                 
                 HStack {
                     Text(conversationGroup.date.daysAgoString())
                         .font(.system(size: 14))
                         .fontWeight(.semibold)
-                        .foregroundColor(Color(.systemGray))
+                        .foregroundColor(Color(nsColor: .systemGray))
                     
                     Spacer()
                 }
@@ -72,7 +72,7 @@ struct ConversationHistoryList: View {
                             Text(dailyConversation.name)
                                 .lineLimit(1)
                                 .font(.system(size: 16))
-                                .foregroundColor(Color(.label))
+                                .foregroundColor(Color.labelCustom)
                                 .animation(.easeOut(duration: 0.15))
                                 .transition(.opacity)
                             Spacer()

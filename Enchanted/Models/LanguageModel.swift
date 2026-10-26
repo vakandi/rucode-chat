@@ -14,5 +14,7 @@ struct LanguageModel {
 }
 
 enum ModelProvider: Codable {
+    /// Retained so existing SwiftData records continue to decode after migration.
     case ollama
+    case opencodeRust
 }
