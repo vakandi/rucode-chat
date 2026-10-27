@@ -1,104 +1,148 @@
-[<img src="https://img.shields.io/badge/App_Store-0D96F6?&logo=app-store&logoColor=white">](https://apps.apple.com/gb/app/enchanted-llm/id6474268307)
 ![Swift](https://img.shields.io/badge/swift-F54A2A?&logo=swift&logoColor=white)
-![Release](https://img.shields.io/github/v/release/gluonfield/enchanted)
-![Stars](https://img.shields.io/github/stars/gluonfield/enchanted.svg)
-[<img src="https://img.shields.io/twitter/url?url=https%3A%2F%2Ftwitter.com%2Famgauge">](https://twitter.com/amgauge)
-![iOS](https://img.shields.io/badge/iOS-000000?&logo=os&logoColor=white)
-![macOS](https://img.shields.io/badge/macOS-000000?style=?&logo=os&logoColor=white)
-![visionOS](https://img.shields.io/badge/visionOS-000000?style=?&logo=os&logoColor=white)
+![macOS](https://img.shields.io/badge/macOS-14%2B-000000?&logo=apple&logoColor=white)
+![License](https://img.shields.io/badge/license-Apache--2.0-blue)
+
+<img src="./assets/logo.png" width="96" alt="RuCode Chat">
 
 # RuCode Chat
 
-RuCode Chat is a community fork of [Enchanted](https://github.com/gluonfield/enchanted), adapted to chat with the OpenCodeRust engine through its Bun control API. The original project’s UI, license, and attribution are retained.
+RuCode Chat is a macOS fork of [Enchanted](https://github.com/gluonfield/enchanted) that talks to the
+OpenCodeRust engine through its Bun control plane instead of a cloud LLM API. The SwiftUI interface,
+the Apache-2.0 license, and the original attribution are retained.
 
-The client uses Bun control (`/models`, `/server/health`) and the OpenCodeRust child (`/session`, `/session/{id}/prompt`, `/event`). Bun and child URLs, token, and server-visible working directory are configured in Settings. Defaults target the local Bun server on port 5656 and child on 4096; remote devices need explicit reachable addresses and secure transport.
+The app is built for one stack: Bun control on `127.0.0.1:5656` and the Rust child engine on
+`127.0.0.1:4096`. Nothing leaves the machine unless you point the URLs at a remote host.
 
-The upstream screenshots and UI examples below document the Enchanted components this fork retains; they are not screenshots of the current RuCode Chat integration.
+## How it works
 
-## Demo
+- `RuCodeAPI` is the only transport layer. It calls Bun control for models, sessions, prompts,
+  the SSE event feed, agent status, schedules, and agent photos.
+- Session deletion goes directly to the Rust engine (`DELETE /session/{id}`), because Bun control
+  does not proxy that route yet.
+- Bun control proxies sessions and the event stream to the Rust child. The app never talks to a
+  provider directly.
+- Tokens are stored in the macOS Keychain under service `com.vakandi.rucode-chat`, account
+  `elia-auth-token`.
+- Conversations, models, and completion instructions are persisted as a single JSON snapshot at
+  `~/Library/Application Support/RuCodeChat/store.json`. SwiftData is not used by this build.
+- Streaming consumes the Rust diff frames (`message.part.updated` and `message.part.delta`),
+  deduplicates the first snapshot against the following delta, reconnects up to three times
+  without re-sending the prompt, then reconciles the turn with the stored transcript.
+- Provider failures arrive as assistant text prefixed with `Provider error:` and are surfaced as
+  an error state instead of being reported as a successful turn.
 
-[<img src="./assets/promo.png">](https://www.youtube.com/watch?v=zW3roZ_vM5Q)
+## Features
 
-[Vision Pro Demo](https://www.youtube.com/watch?v=y4ZeGU5IdHA)
+- Streaming responses from the Rust engine, with reconnect and transcript reconciliation
+- Bun model selection and Rust agent selection
+- Conversation history, stored locally and discovered from existing Rust sessions
+- Sidebar management: pin sessions to the top, group them into collapsible folders created with
+  the folder button, and delete a session locally and on the Rust engine
+- Markdown rendering with code highlighting, plus light and dark appearance
+- File attachments: the paperclip inserts a coloured chip in the input, dragging any file anywhere
+  on the chat also attaches it, hovering shows the full path, and the absolute path is prepended to
+  the prompt when the message is sent
+- Editable prompt templates on the empty chat screen: the pencil on a card edits it in place, and
+  Settings can add, delete, reorder, and edit templates in a scrollable list. Long prompts are kept
+  in full and truncated only for card display
+- Agent management: enable or disable configured subworkers, edit their schedule (hourly,
+  frequent, or cron, with day and hour selection), and upload or remove profile photos
+- Bun control health and Rust child restart controls in Settings
+- Native macOS app bundle, ad-hoc signed, no App Store dependency
 
-## Showcase
+## Requirements
 
-### Macbook
+- macOS 14 or newer
+- Command Line Tools with Swift 5.9 or newer (`xcode-select --install`)
+- A running Bun control plane and OpenCodeRust child. The local `subworker-opencode-rust`
+  repository provides both, and seeds `ELIA_AUTH_TOKEN` in its `.env`.
+- The token from that `.env`, either seeded in the Keychain or typed in Settings.
 
-![image](https://github.com/AugustDev/enchanted/assets/5672094/32a6a203-19a2-4cc1-adc9-cfac8445dd42)
+Xcode is not required. The SwiftPM manifest, `scripts/stage-sources.py`, and
+`scripts/patch-deps.py` build the macOS sources without the Xcode-only macro plugins.
 
-#### Dark mode
+## Build and install
 
-![image](https://github.com/AugustDev/enchanted/assets/5672094/6202d235-6c34-4f79-b08a-a372fca0439e)
+```bash
+cd ~/Documents/rucode-chat
+./scripts/build-app.sh
+pkill -f "RuCode Chat.app/Contents/MacOS/RuCodeChat" 2>/dev/null || true
+rm -rf "/Applications/RuCode Chat.app"
+cp -R "dist/RuCode Chat.app" /Applications/
+open "/Applications/RuCode Chat.app"
+```
 
-#### Settings
+`build-app.sh` stages the macOS sources into `build/generated-sources/RuCodeChat`, strips
+`#Preview` blocks, swaps SwiftData for the JSON store, patches dependency previews, builds with
+SwiftPM in release mode, assembles the bundle, and signs it ad-hoc. Always edit the tracked
+sources under `Enchanted/`, never the generated copy.
 
-<img src="https://github.com/AugustDev/enchanted/assets/5672094/b03acfc7-cbc3-4bab-92cd-73d3eb75b47e" width="1000" height="100%">
+The build script clears `HTTP_PROXY`, `HTTPS_PROXY`, and related variables before invoking SwiftPM,
+because a dead local proxy will otherwise block dependency resolution.
 
-#### Completions
+## First run
 
- <img src="https://github.com/AugustDev/enchanted/assets/5672094/5ca80a65-1bec-4d6c-8065-f0a26861c3c2" width="1000" height="100%">
+1. Start Bun control and the Rust child from the `subworker-opencode-rust` repository.
+2. Open RuCode Chat, then Settings.
+3. Confirm the Bun control URL (`http://127.0.0.1:5656`), the Rust engine URL
+   (`http://127.0.0.1:4096`), and a server-visible working directory such as `~/Documents`.
+4. Seed the token once if the Keychain entry is empty:
 
-#### Use from anywhere
+```bash
+security add-generic-password \
+  -s com.vakandi.rucode-chat \
+  -a elia-auth-token \
+  -w "$ELIA_AUTH_TOKEN" \
+  -U
+```
 
-https://github.com/AugustDev/enchanted/assets/5672094/221d2a48-9218-4579-b284-a1ad2845e4d6
+5. Pick a model from the toolbar. Sending without a selected model now shows an alert instead of
+   failing silently.
 
-#### Build custom prompt templates and use anywhere
+## Configuration
 
-<img width="599" alt="Xnapper-2024-05-02-18 57 19" src="https://github.com/AugustDev/enchanted/assets/5672094/7b69fe50-5399-4c0b-a269-f28353b8ca27">
+Settings stores non-secret values in `UserDefaults`:
 
-https://github.com/AugustDev/enchanted/assets/5672094/8bdebd5e-2910-4855-bb10-91239cafbc28
+- `rucodeControlURL` defaults to `http://127.0.0.1:5656`
+- `rucodeEngineURL` defaults to `http://127.0.0.1:4096`
+- `rucodeWorkingDirectory` defaults to `~/Documents`
+- `rucodeSelectedAgent` holds the selected Rust agent
+- `rucodeSessionIDs` maps local conversations to Rust session IDs
+- `rucodePromptTemplates` stores the empty-chat prompt templates as JSON
+- `rucodePinnedConversations` stores the pinned conversation IDs
+- `rucodeSessionFolders` stores the sidebar folders and their conversation IDs as JSON
 
-#### Custom completion
+The app relaxes App Transport Security (`NSAllowsArbitraryLoads`) so the localhost HTTP
+endpoints work. Keep that in mind before pointing it at a remote control plane: use a reachable
+HTTPS address and a matching token.
 
-https://github.com/AugustDev/enchanted/assets/5672094/2ef476e7-8fc5-4992-9152-6df3847056d6
+## Known limitations
 
-### iPhone
+- Stop generation is not available. The stop button was removed because the Rust prompt endpoint
+  runs the turn to completion and its abort route has no effect. A turn keeps running server-side
+  even if the window closes.
+- Image prompts are rejected. The Rust integration is text-only, and the composer reports that
+  images are unsupported if one is attached.
+- Voice input, read-aloud, and the per-conversation system prompt were removed from this fork.
+- Subagent and todo panels are not implemented. The Rust engine currently runs `task` subagents
+  in an in-memory map without registering them as child sessions or emitting their tokens, so the
+  client has no subagent events to render. This needs server-side work first.
+- Deleting a session requires the Rust engine to be reachable. If the delete request fails, the
+  local entry is removed but the session can reappear on the next refresh.
+- The fork builds macOS only. The upstream iOS and visionOS targets are not part of the SwiftPM
+  build.
+- The app is ad-hoc signed. macOS may ask for confirmation the first time it is opened on another
+  machine.
 
-Multimodal
+## Upstream
 
-<img src="https://github.com/AugustDev/enchanted/assets/5672094/f2a7dafa-9470-4689-9f5a-27b6eb0e168d" width="1000" height="100%">
+RuCode Chat is a derivative work of Enchanted by Augustinas Malinauskas. The upstream project and
+its documentation describe the original app, not this integration. Changes made here are limited
+to the transport, persistence, build pipeline, and the interface adjustments listed above.
 
-Markdown
+- Upstream: https://github.com/gluonfield/enchanted
+- License: Apache License 2.0, see [LICENSE](./LICENSE)
 
-<img src="https://github.com/AugustDev/enchanted/assets/5672094/9caefcb2-69eb-46d0-8d4f-b6269d7c2937" width="1000" height="100%">
+## Author
 
-Conversation history
-
-<img width="959" alt="Xnapper-2024-05-03-12 00 28" src="https://github.com/AugustDev/enchanted/assets/5672094/7dade8ec-e94d-4936-9237-f2f2bc1533f2">
-
-### Vision Pro
-
-<img width="1534" alt="image" src="https://github.com/AugustDev/enchanted/assets/5672094/810f600a-4377-48e3-9c94-7bb90b78acaf">
-
-<img width="1496" alt="image" src="https://github.com/AugustDev/enchanted/assets/5672094/6014a0b4-03ed-4def-b26c-b9baefad3781">
-
-
-
-
-- Text to Speech (Read Aloud)
-- Conversation history included in the API calls
-- Dark/Light mode
-- Conversation history is stored on your device
-- Markdown support (nicely displays tables/lists/code blocks)
-- Voice prompts
-- Image attachments for prompts
-- Specify system prompt used for every conversations
-- Edit message content or submit message with different model
-- Delete single conversation / delete all conversations
-- macOS Spotlight panel <kbd>Ctrl</kbd>+<kbd>⌘</kbd>+<kbd>K</kbd>
-- All features work offline
-
-## Development status
-
-This fork is under active development. The initial chat path supports text prompts, Rust SSE text deltas, Rust session/history discovery, Bun model and Rust agent selection, and shared Bun-hosted agent photos. Robust stream reconnect/deduplication, server start/stop scripts, and image prompts are not yet complete. Existing local SwiftData conversations are preserved and are not migrated to Rust sessions.
-
-To build, open `Enchanted.xcodeproj` in Xcode and select the Enchanted scheme. The executable’s display name is RuCode Chat. A full app build requires Xcode; command line tools alone are insufficient.
-
-# Contact
-
-For any questions please do not hesitate to contact me at augustinas@subj.org
-
-# Author
-
-Augustinas Malinauskas
+Augustinas Malinauskas (original Enchanted author)

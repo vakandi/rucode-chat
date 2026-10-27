@@ -7,6 +7,7 @@
 
 #if os(macOS) || os(visionOS)
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct InputFieldsView: View {
     @Binding var message: String
@@ -15,9 +16,9 @@ struct InputFieldsView: View {
     var selectedModel: LanguageModelSD?
     var onSendMessageTap: @MainActor (_ prompt: String, _ model: LanguageModelSD, _ image: Image?, _ trimmingMessageId: String?) -> ()
     @Binding var editMessage: MessageSD?
+    @Binding var attachedFiles: [URL]
     
     @State private var selectedImage: Image?
-    @State private var attachedFiles: [URL] = []
     @State private var fileDropActive: Bool = false
     @State private var fileSelectingActive: Bool = false
     @State private var documentSelectingActive: Bool = false
@@ -97,6 +98,19 @@ struct InputFieldsView: View {
     
     private func updateSelectedImage(_ image: Image) {
         selectedImage = image
+    }
+
+    @MainActor
+    private func addAttachment(_ url: URL) {
+        guard url.isFileURL, !attachedFiles.contains(url) else { return }
+        attachedFiles.append(url)
+    }
+
+    private static func fileURL(from item: NSSecureCoding?) -> URL? {
+        if let url = item as? URL { return url }
+        if let data = item as? Data { return URL(dataRepresentation: data, relativeTo: nil) }
+        if let url = item as? NSURL { return url as URL }
+        return nil
     }
     
 #if os(macOS)
@@ -221,16 +235,21 @@ struct InputFieldsView: View {
             }
         }
         .animation(.default, value: fileDropActive)
-        .onDrop(of: [.image], isTargeted: $fileDropActive.animation(), perform: { providers in
-            guard let provider = providers.first else { return false }
-            _ = provider.loadDataRepresentation(for: .image) { data, error in
-                if error == nil, let data {
-                    selectedImage = Image(data: data)
+        .onDrop(of: [.fileURL], isTargeted: $fileDropActive.animation()) { providers in
+            let fileProviders = providers.filter { $0.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) }
+            guard !fileProviders.isEmpty else { return false }
+
+            for provider in fileProviders {
+                provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, _ in
+                    guard let url = Self.fileURL(from: item) else { return }
+                    Task { @MainActor in
+                        addAttachment(url)
+                    }
                 }
             }
-            
+
             return true
-        })
+        }
         .contentShape(Rectangle())
         .onTapGesture {
             // allow focusing text area on greater tap area
@@ -251,7 +270,8 @@ struct InputFieldsView: View {
         conversationState: .completed,
         onStopGenerateTap: {},
         onSendMessageTap: {_, _, _, _  in},
-        editMessage: .constant(nil)
+        editMessage: .constant(nil),
+        attachedFiles: .constant([])
     )
 }
 #endif

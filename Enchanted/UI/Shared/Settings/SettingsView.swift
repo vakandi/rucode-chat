@@ -43,6 +43,8 @@ struct SettingsView: View {
     @State private var showAgentPhotoImporter = false
     @State private var schedulingAgent: RuCodeConfiguredAgents.Agent?
     @State private var agentEnableConfirmation: RuCodeConfiguredAgents.Agent?
+    @State private var promptTemplateStore = PromptTemplateStore.shared
+    @State private var promptTemplateEditor: PromptTemplateEditorContext?
 
     @MainActor
     private func refreshConfiguredAgents() async {
@@ -78,6 +80,70 @@ struct SettingsView: View {
         }
     }
     
+    @ViewBuilder
+    private func promptTemplateRow(_ template: PromptTemplate) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(template.text)
+                    .font(.system(size: 13))
+                    .lineLimit(2)
+                    .multilineTextAlignment(.leading)
+            }
+
+            Spacer(minLength: 8)
+
+            Button {
+                promptTemplateStore.move(id: template.id, by: -1)
+            } label: {
+                Image(systemName: "chevron.up")
+                    .font(.system(size: 10, weight: .semibold))
+            }
+            .buttonStyle(.borderless)
+            .disabled(promptTemplateStore.templates.first?.id == template.id)
+            .help("Move up")
+            .accessibilityLabel("Move prompt template up")
+
+            Button {
+                promptTemplateStore.move(id: template.id, by: 1)
+            } label: {
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 10, weight: .semibold))
+            }
+            .buttonStyle(.borderless)
+            .disabled(promptTemplateStore.templates.last?.id == template.id)
+            .help("Move down")
+            .accessibilityLabel("Move prompt template down")
+
+            Button {
+                promptTemplateEditor = PromptTemplateEditorContext(template: template)
+            } label: {
+                Image(systemName: "pencil")
+                    .font(.system(size: 11, weight: .semibold))
+            }
+            .buttonStyle(.borderless)
+            .help("Edit prompt template")
+            .accessibilityLabel("Edit prompt template")
+
+            Button {
+                promptTemplateStore.delete(id: template.id)
+            } label: {
+                Image(systemName: "trash")
+                    .font(.system(size: 11))
+            }
+            .buttonStyle(.borderless)
+            .foregroundStyle(.red)
+            .help("Delete prompt template")
+            .accessibilityLabel("Delete prompt template")
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.gray5Custom, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(Color.gray4Custom.opacity(0.35), lineWidth: 1)
+        }
+    }
+
     var body: some View {
         VStack {
             ZStack {
@@ -229,6 +295,39 @@ struct SettingsView: View {
                     }
                 }
 
+                Section(header: Text("Prompt Templates").font(.headline)) {
+                    VStack(alignment: .leading, spacing: 10) {
+                        if promptTemplateStore.templates.isEmpty {
+                            Text("No prompt templates yet. Add one to show it on the empty chat screen.")
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                        } else {
+                            ScrollView(.vertical, showsIndicators: true) {
+                                LazyVStack(spacing: 8) {
+                                    ForEach(promptTemplateStore.templates) { template in
+                                        promptTemplateRow(template)
+                                    }
+                                }
+                                .padding(.vertical, 2)
+                            }
+                            .frame(maxHeight: 230)
+                        }
+
+                        HStack {
+                            Button {
+                                promptTemplateEditor = PromptTemplateEditorContext(template: nil)
+                            } label: {
+                                Label("Add prompt template", systemImage: "plus")
+                            }
+                            Spacer()
+                        }
+
+                        Text("These cards appear when no conversation is open. Long prompts are truncated on the card; use the pencil to edit one without opening Settings.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
                 Section(header: Text("Chat").font(.headline)) {
                     Picker(selection: $defaultModel) {
                         ForEach(models, id:\.self) { model in
@@ -357,6 +456,18 @@ struct SettingsView: View {
             ) { schedule in
                 try await RuCodeAPI.shared.setAgentSchedule(agent.name, schedule: schedule)
                 await refreshConfiguredAgents()
+            }
+        }
+        .sheet(item: $promptTemplateEditor) { context in
+            PromptTemplateEditorView(
+                isNew: context.template == nil,
+                initialText: context.template?.text ?? ""
+            ) { text in
+                if let template = context.template {
+                    promptTemplateStore.update(id: template.id, text: text)
+                } else {
+                    promptTemplateStore.add(text: text)
+                }
             }
         }
         .fileImporter(isPresented: $showAgentPhotoImporter, allowedContentTypes: [.image], allowsMultipleSelection: false) { result in

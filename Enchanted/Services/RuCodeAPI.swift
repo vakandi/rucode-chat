@@ -332,6 +332,22 @@ final class RuCodeAPI: @unchecked Sendable {
         return try await get([RuCodeStoredMessage].self, base: controlURL, path: "/chat/sessions/\(safeID)/messages")
     }
 
+    /// Deletes the session on the Rust engine itself. Bun control does not proxy
+    /// this route yet, and the engine is already a configured, authenticated base.
+    func deleteSession(sessionID: String) async throws {
+        let path = "/session/\(pathSegment(sessionID))"
+        guard let url = URL(string: path, relativeTo: engineURL) else { throw RuCodeAPIError.invalidURL(path) }
+        var request = URLRequest(url: url)
+        request.httpMethod = "DELETE"
+        request.timeoutInterval = 20
+        if !token.isEmpty { request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let response = response as? HTTPURLResponse else { throw RuCodeAPIError.malformedResponse }
+        guard (200..<300).contains(response.statusCode) || response.statusCode == 404 else {
+            throw RuCodeAPIError.http(response.statusCode, String(decoding: data.prefix(2048), as: UTF8.self))
+        }
+    }
+
     /// Establishes the global SSE feed before returning. The caller filters events by session ID.
     func connectEvents() async throws -> AsyncThrowingStream<RuCodeEvent, Error> {
         guard let url = URL(string: "/chat/events", relativeTo: controlURL) else { throw RuCodeAPIError.invalidURL("/chat/events") }

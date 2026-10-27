@@ -113,10 +113,20 @@ final class ConversationStore: Sendable {
     }
     
     func delete(_ conversation: ConversationSD) async throws {
+        var remoteIDs = UserDefaults.standard.dictionary(forKey: "rucodeSessionIDs") as? [String: String] ?? [:]
+        if let remoteID = remoteIDs.removeValue(forKey: conversation.id.uuidString) {
+            try? await RuCodeAPI.shared.deleteSession(sessionID: remoteID)
+            UserDefaults.standard.set(remoteIDs, forKey: "rucodeSessionIDs")
+        }
+
         try await swiftDataService.deleteConversation(conversation)
         let fetchedConversations = try await swiftDataService.fetchConversations()
-        DispatchQueue.main.async {
-            self.selectedConversation = nil
+        await MainActor.run {
+            SessionSidebarStore.shared.forget(conversation)
+            if self.selectedConversation?.id == conversation.id {
+                self.selectedConversation = nil
+                self.messages = []
+            }
             self.conversations = fetchedConversations
         }
     }
